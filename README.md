@@ -2,13 +2,19 @@
 
 **JAIPilot CLI is a code safety harness for AI-assisted Java delivery.**
 
-As more production code is written with tools like Cursor and Claude Code, the cost of shipping unverified changes rises fast. JAIPilot helps Java teams protect existing behavior, generate missing JUnit coverage for changed classes, and move toward release decisions with more confidence.
+JAIPilot helps Java teams generate or repair JUnit tests when code changes put coverage and release confidence at risk. It is designed for Maven-based Java projects that use JaCoCo to verify coverage and need a reliable way to protect existing behavior as more code is produced by AI tools like Cursor and Claude Code.
 
-JAIPilot is built for teams that want more than ad hoc test generation. It is designed to fit into a Java testing workflow where coverage matters, existing behavior must be preserved, and new code needs a reliable verification layer before it reaches production.
+## What JAIPilot Does
+
+- Generates JUnit tests for changed Java classes
+- Repairs broken or outdated test classes
+- Helps restore coverage after code changes
+- Protects existing behavior with stronger test coverage
+- Fits into terminal, CI, and agent-driven workflows
 
 ## Why Enterprise Teams Use JAIPilot
 
-- **Coverage maximization, not one-off test generation.** JAIPilot is built for workflows where teams need to push classes toward coverage requirements instead of just asking an LLM to "write some tests."
+- **Coverage repair, not one-off test generation.** JAIPilot is built for workflows where teams need to recover coverage regressions and meet coverage requirements instead of just asking an LLM to "write some tests."
 - **A safety harness for AI-generated code.** When Cursor or Claude Code accelerates implementation, JAIPilot adds a disciplined test layer that helps catch regressions before deployment.
 - **Protection for existing code.** New feature work should not silently weaken tested behavior. JAIPilot helps generate or repair tests so existing code paths stay protected as the codebase evolves.
 - **Deploy with confidence.** JAIPilot is intended to sit alongside Maven, JUnit, and JaCoCo so teams can use coverage as a concrete release signal instead of relying on intuition.
@@ -36,14 +42,14 @@ JAIPilot currently works best for:
 - JUnit-based testing workflows
 - Teams that use JaCoCo as the coverage signal in local development or CI
 
-Today, the CLI focuses on authenticated test generation and test repair for targeted Java classes. That makes it a practical building block for coverage-oriented workflows in Java codebases.
+Today, the CLI focuses on authenticated test generation and test repair for targeted Java classes.
 
-## Coverage Workflow
+## Coverage Repair Workflow
 
 JAIPilot is designed to fit naturally into a JaCoCo-driven coverage loop:
 
 1. A developer or coding agent changes a Java class.
-2. The team identifies the class or package that needs stronger unit coverage.
+2. Coverage drops or the team identifies a class that no longer meets coverage expectations.
 3. JAIPilot generates a new JUnit test or repairs an existing one.
 4. Maven and JaCoCo are run to validate behavior and measure coverage.
 5. The change can be reviewed and deployed with a stronger safety signal.
@@ -72,7 +78,7 @@ Typical pattern:
 2. JAIPilot is run against the changed class to generate or repair tests.
 3. Maven and JaCoCo validate that the change is covered and does not regress existing behavior.
 
-That workflow is especially important in teams where AI is increasing code throughput faster than manual test writing can keep up.
+That matters in teams where AI is increasing code throughput faster than manual test writing can keep up.
 
 ## Quick Start
 
@@ -98,7 +104,7 @@ java -jar build/libs/jaipilot-cli-0.1.0-all.jar --help
 ./jaipilot status
 ```
 
-## Common Usage
+## Usage
 
 ### Generate a test for a source class
 
