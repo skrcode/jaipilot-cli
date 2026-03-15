@@ -1,6 +1,6 @@
 # JAIPilot CLI
 
-**JAIPilot CLI is a code safety harness for AI-assisted Java delivery.**
+**JAIPilot - Test Harness for applications. Deploy with confidence.**
 
 JAIPilot helps Java teams generate or repair JUnit tests when code changes put coverage and release confidence at risk. It is designed for Maven-based Java projects that use JaCoCo to verify coverage and need a reliable way to protect existing behavior as more code is produced by AI tools like Cursor and Claude Code.
 
