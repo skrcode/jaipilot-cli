@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<report name="sample">
+  <package name="com/example/service">
+    <class name="com/example/service/OrderService" sourcefilename="OrderService.java">
+      <method name="&lt;init&gt;" desc="()V" line="7">
+        <counter type="INSTRUCTION" missed="0" covered="3"/>
+        <counter type="LINE" missed="0" covered="1"/>
+      </method>
+      <method name="submit" desc="(I)I" line="12">
+        <counter type="INSTRUCTION" missed="6" covered="4"/>
+        <counter type="BRANCH" missed="2" covered="0"/>
+        <counter type="LINE" missed="2" covered="1"/>
+      </method>
+      <counter type="INSTRUCTION" missed="6" covered="7"/>
+      <counter type="BRANCH" missed="2" covered="0"/>
+      <counter type="LINE" missed="2" covered="2"/>
+    </class>
+    <sourcefile name="OrderService.java">
+      <line nr="12" mi="0" ci="1" mb="0" cb="0"/>
+      <line nr="13" mi="2" ci="0" mb="2" cb="0"/>
+      <line nr="14" mi="3" ci="0" mb="0" cb="0"/>
+      <line nr="15" mi="0" ci="1" mb="0" cb="0"/>
+      <counter type="INSTRUCTION" missed="6" covered="7"/>
+      <counter type="BRANCH" missed="2" covered="0"/>
+      <counter type="LINE" missed="2" covered="2"/>
+    </sourcefile>
+    <class name="com/example/service/InvoiceService" sourcefilename="InvoiceService.java">
+      <method name="generate" desc="()V" line="20">
+        <counter type="INSTRUCTION" missed="1" covered="9"/>
+        <counter type="BRANCH" missed="0" covered="2"/>
+        <counter type="LINE" missed="1" covered="4"/>
+      </method>
+      <counter type="INSTRUCTION" missed="1" covered="9"/>
+      <counter type="BRANCH" missed="0" covered="2"/>
+      <counter type="LINE" missed="1" covered="4"/>
+    </class>
+    <sourcefile name="InvoiceService.java">
+      <line nr="20" mi="0" ci="1" mb="0" cb="0"/>
+      <line nr="21" mi="0" ci="1" mb="0" cb="1"/>
+      <line nr="22" mi="1" ci="0" mb="0" cb="0"/>
+      <line nr="23" mi="0" ci="1" mb="0" cb="1"/>
+      <line nr="24" mi="0" ci="1" mb="0" cb="0"/>
+      <counter type="INSTRUCTION" missed="1" covered="9"/>
+      <counter type="BRANCH" missed="0" covered="2"/>
+      <counter type="LINE" missed="1" covered="4"/>
+    </sourcefile>
+  </package>
+  <counter type="INSTRUCTION" missed="7" covered="16"/>
+  <counter type="BRANCH" missed="2" covered="2"/>
+  <counter type="LINE" missed="3" covered="6"/>
+</report>

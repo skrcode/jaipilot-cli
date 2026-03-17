@@ -1,0 +1,28 @@
+#!/usr/bin/env sh
+set -eu
+
+BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+MVNW="$BASE_DIR/mvnw"
+
+find_jar() {
+  find "$BASE_DIR/target" -maxdepth 1 -name 'jaipilot-cli-*-all.jar' | sort | tail -n 1
+}
+
+if [ ! -x "$MVNW" ]; then
+  echo "Missing Maven Wrapper at $MVNW" >&2
+  exit 1
+fi
+
+JAR=$(find_jar)
+
+if [ -z "$JAR" ]; then
+  "$MVNW" -q -DskipTests package >/dev/null
+  JAR=$(find_jar)
+fi
+
+if [ -z "$JAR" ]; then
+  echo "Could not locate the shaded JAIPilot jar under $BASE_DIR/target" >&2
+  exit 1
+fi
+
+exec java -jar "$JAR" "$@"

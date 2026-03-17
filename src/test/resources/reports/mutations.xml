@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mutations partial="true">
+  <mutation detected="true" status="KILLED" numberOfTestsRun="3">
+    <sourceFile>OrderService.java</sourceFile>
+    <mutatedClass>com.example.service.OrderService</mutatedClass>
+    <mutatedMethod>createOrder</mutatedMethod>
+    <methodDescription>()V</methodDescription>
+    <lineNumber>24</lineNumber>
+    <mutator>org.pitest.mutationtest.engine.gregor.mutators.ConditionalsBoundaryMutator</mutator>
+    <description>changed conditional boundary</description>
+    <index>0</index>
+    <block>0</block>
+  </mutation>
+  <mutation detected="false" status="SURVIVED" numberOfTestsRun="2">
+    <sourceFile>OrderService.java</sourceFile>
+    <mutatedClass>com.example.service.OrderService</mutatedClass>
+    <mutatedMethod>createOrder</mutatedMethod>
+    <methodDescription>()V</methodDescription>
+    <lineNumber>31</lineNumber>
+    <mutator>org.pitest.mutationtest.engine.gregor.mutators.ConditionalsBoundaryMutator</mutator>
+    <description>changed conditional boundary</description>
+    <index>1</index>
+    <block>0</block>
+  </mutation>
+  <mutation detected="false" status="NO_COVERAGE" numberOfTestsRun="0">
+    <sourceFile>PaymentService.java</sourceFile>
+    <mutatedClass>com.example.service.PaymentService</mutatedClass>
+    <mutatedMethod>applyDiscount</mutatedMethod>
+    <methodDescription>()V</methodDescription>
+    <lineNumber>48</lineNumber>
+    <mutator>org.pitest.mutationtest.engine.gregor.mutators.MathMutator</mutator>
+    <description>Replaced integer subtraction with addition</description>
+    <index>2</index>
+    <block>0</block>
+  </mutation>
+  <mutation detected="true" status="TIMED_OUT" numberOfTestsRun="1">
+    <sourceFile>PaymentService.java</sourceFile>
+    <mutatedClass>com.example.service.PaymentService</mutatedClass>
+    <mutatedMethod>applyDiscount</mutatedMethod>
+    <methodDescription>()V</methodDescription>
+    <lineNumber>52</lineNumber>
+    <mutator>org.pitest.mutationtest.engine.gregor.mutators.VoidMethodCallMutator</mutator>
+    <description>removed call to logger</description>
+    <index>3</index>
+    <block>0</block>
+  </mutation>
+  <mutation detected="false" status="SURVIVED" numberOfTestsRun="2">
+    <sourceFile>InvoiceService.java</sourceFile>
+    <mutatedClass>com.example.service.InvoiceService</mutatedClass>
+    <mutatedMethod>submit</mutatedMethod>
+    <methodDescription>()V</methodDescription>
+    <lineNumber>18</lineNumber>
+    <mutator>org.pitest.mutationtest.engine.gregor.mutators.ReturnValsMutator</mutator>
+    <description>replaced return value with null for Invoice</description>
+    <index>4</index>
+    <block>0</block>
+  </mutation>
+</mutations>
