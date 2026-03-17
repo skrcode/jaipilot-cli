@@ -1,8 +1,18 @@
-# JAIPilot CLI
-
-[![CI](https://github.com/skrcode/jaipilot-cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/skrcode/jaipilot-cli/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/skrcode/jaipilot-cli)](https://github.com/skrcode/jaipilot-cli/releases)
-[![License](https://img.shields.io/github/license/skrcode/jaipilot-cli)](LICENSE)
+<div align="center">
+  <h1>JAIPilot CLI</h1>
+  <p><strong>Stop guessing. Start verifying AI-generated Java changes.</strong></p>
+  <p>
+    <a href="https://github.com/skrcode/jaipilot-cli/actions/workflows/ci.yml">
+      <img src="https://github.com/skrcode/jaipilot-cli/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI">
+    </a>
+    <a href="https://github.com/skrcode/jaipilot-cli/releases">
+      <img src="https://img.shields.io/github/v/release/skrcode/jaipilot-cli" alt="Release">
+    </a>
+    <a href="LICENSE">
+      <img src="https://img.shields.io/github/license/skrcode/jaipilot-cli" alt="License">
+    </a>
+  </p>
+</div>
 
 JAIPilot is a zero-config test safety harness for Java Maven projects. It helps keep code written by agents safe by enforcing strong test coverage and mutation resistance before code ships.
 
