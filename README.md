@@ -4,7 +4,11 @@
 [![Release](https://img.shields.io/github/v/release/skrcode/jaipilot-cli)](https://github.com/skrcode/jaipilot-cli/releases)
 [![License](https://img.shields.io/github/license/skrcode/jaipilot-cli)](LICENSE)
 
-JAIPilot is a zero-config test safety harness for Java Maven applications - ensures that your codebase is always safe and protected via bullet-proof unit tests. High coverage robust unit tests allows you to run multiple coding agents (claude code, codex, cursor) safely on your codebase - existing tests invoke all new code written via agents and can quickly get corrected. Having a high coverage (100% branch, line, mutation) repo allows the agent to use existing tests as a guardrail and feedback loop. New code would also have to be 100% covered.    
+JAIPilot is a zero-config test safety harness for Java Maven applications - ensures that your codebase is always safe and protected via bullet-proof unit tests. 
+
+High coverage robust unit tests allows you to run multiple coding agents (claude code, codex, cursor) safely on your codebase - existing tests invoke all new code written via agents and can quickly get corrected. 
+
+Having a high coverage (100% branch, line, mutation) repo allows the agent to use existing tests as a guardrail and feedback loop. New code would also have to be 100% covered.    
 `jaipilot verify` runs JaCoCo coverage checks and PIT mutation testing, then prints an actionable PASS or FAIL report that helps developers and coding agents tighten tests before shipping changes.
 
 It is designed to work alongside Claude Code, Cursor, Codex, and similar tools. Agents can change code, run `jaipilot verify`, inspect weak coverage and surviving mutations, add or improve tests, and repeat until the project is well protected.
