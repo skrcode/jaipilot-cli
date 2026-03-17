@@ -1,7 +1,7 @@
 project:
   name: jaipilot
-  description: JAIPilot CLI
-  longDescription: JAIPilot CLI runs JaCoCo and PIT for Maven projects and prints an actionable PASS or FAIL report.
+  description: Zero-config Java Maven coverage and mutation testing CLI for AI coding agents
+  longDescription: JAIPilot is a zero-config Java Maven test safety harness that runs JaCoCo coverage checks and PIT mutation testing, helping Claude Code, Cursor, Codex, and other AI coding agents write and refactor code safely.
   license: MIT
   copyright: 2026 skrcode
   authors:

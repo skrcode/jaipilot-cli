@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security policy
+    url: https://github.com/skrcode/jaipilot-cli/blob/main/SECURITY.md
+    about: Please follow the private reporting guidance for security issues.
