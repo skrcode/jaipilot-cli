@@ -24,10 +24,11 @@ public final class MavenCommandBuilder {
         command.add("-ntp");
         command.add("-f");
         command.add(buildPomPath.toString());
-        command.add("-DoutputFormats=XML,HTML");
+        command.add("-DoutputFormats=XML");
         command.add("-DtimestampedReports=false");
         command.add("-DreportsDirectory=target/pit-reports");
         command.add("-DfailWhenNoMutations=false");
+        command.add("-Dthreads=" + defaultPitThreads());
         command.add("-DskipTests=false");
         command.addAll(additionalArguments);
         if (!skipClean) {
@@ -41,6 +42,10 @@ public final class MavenCommandBuilder {
         }
         command.add("org.pitest:pitest-maven:" + pitVersion + ":mutationCoverage");
         return command;
+    }
+
+    int defaultPitThreads() {
+        return Math.max(1, Runtime.getRuntime().availableProcessors());
     }
 
     String resolveMavenExecutable(Path buildRoot, Path explicitMavenExecutable) {

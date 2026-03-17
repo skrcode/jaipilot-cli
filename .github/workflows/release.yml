@@ -28,21 +28,53 @@ jobs:
         id: version
         run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Validate Homebrew release prerequisites
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          test -n "$GH_PAT" || { echo "GH_PAT secret is required to publish the GitHub Release and Homebrew formula." >&2; exit 1; }
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
+
+          repo = "skrcode/homebrew-tap"
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GH_PAT']}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+
+          try:
+              with urllib.request.urlopen(request) as response:
+                  data = json.load(response)
+          except urllib.error.HTTPError as exc:
+              print(f"Unable to access {repo} with GH_PAT: {exc}", file=sys.stderr)
+              sys.exit(1)
+
+          if data.get("default_branch") != "main":
+              print(
+                  f"{repo} must use main as the default branch for this workflow. "
+                  f"Found {data.get('default_branch')!r}.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          if data.get("private"):
+              print(f"{repo} must be public for brew install skrcode/tap/jaipilot.", file=sys.stderr)
+              sys.exit(1)
+          PY
+
       - name: Build release artifacts
         run: ./mvnw -B -ntp -Drevision=${{ steps.version.outputs.value }} verify
 
       - name: Smoke test packaged archives
-        run: |
-          VERSION="${{ steps.version.outputs.value }}"
-          ZIP="target/distributions/jaipilot-${VERSION}.zip"
-          TGZ="target/distributions/jaipilot-${VERSION}.tar.gz"
-          test -f "$ZIP"
-          test -f "$TGZ"
-          mkdir -p target/smoke/zip target/smoke/tar
-          unzip -q "$ZIP" -d target/smoke/zip
-          tar -xzf "$TGZ" -C target/smoke/tar
-          target/smoke/zip/jaipilot-${VERSION}/bin/jaipilot --version
-          target/smoke/tar/jaipilot-${VERSION}/bin/jaipilot --version
+        run: ./scripts/smoke-test-distributions.sh --version "${{ steps.version.outputs.value }}"
 
       - name: Publish GitHub release and Homebrew formula
         uses: jreleaser/release-action@v2

@@ -63,18 +63,28 @@ jaipilot verify --maven-executable /path/to/mvn
 - Maven only
 - JUnit 4 and JUnit 5 are supported
 - the command uses a temporary mirrored workspace and does not edit the target repo
+- PIT runs in parallel and reuses history from `~/.jaipilot/pit-history` to speed up repeat runs
 
 ## Releasing
 
-Push a tag like `v0.1.0`.
+JAIPilot ships to Homebrew through the public tap repo `skrcode/homebrew-tap`.
 
-The release workflow builds:
+One-time setup:
+
+- create the public GitHub repo `skrcode/homebrew-tap` with default branch `main`
+- run `./scripts/bootstrap-homebrew-tap.sh --tap skrcode/homebrew-tap --remote-url git@github.com:skrcode/homebrew-tap.git --push`
+- add the `GH_PAT` GitHub Actions secret to `skrcode/jaipilot-cli` with write access to this repo and `skrcode/homebrew-tap`
+
+Release flow:
+
+- run `./scripts/preflight-homebrew-release.sh 0.1.0`
+- push a tag like `v0.1.0`
+- watch the release workflow publish the GitHub Release and update the Homebrew tap
+
+The release workflow publishes:
 
 - `jaipilot-<version>.zip`
 - `jaipilot-<version>.tar.gz`
+- The Homebrew formula is generated from the `.zip` artifact.
 
-Then it publishes the GitHub Release and updates the Homebrew tap.
-
-Required secret:
-
-- `GH_PAT` with write access to this repo and `skrcode/homebrew-tap`
+See [docs/homebrew-release.md](docs/homebrew-release.md) for the full walkthrough.

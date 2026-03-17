@@ -27,9 +27,10 @@ class MavenCommandBuilderTest {
         assertEquals("custom-mvn", command.get(0));
         assertTrue(command.contains("-f"));
         assertTrue(command.contains("/tmp/build-root/pom.xml"));
-        assertTrue(command.contains("-DoutputFormats=XML,HTML"));
+        assertTrue(command.contains("-DoutputFormats=XML"));
         assertTrue(command.contains("-DtimestampedReports=false"));
         assertTrue(command.contains("-DreportsDirectory=target/pit-reports"));
+        assertTrue(command.contains("-Dthreads=" + commandBuilder.defaultPitThreads()));
         assertTrue(command.contains("clean"));
         assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.13:prepare-agent"));
         assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.13:report"));

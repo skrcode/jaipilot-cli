@@ -10,8 +10,11 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -42,6 +45,7 @@ public final class MavenReactorBootstrapper {
         PomModel rootModel = readPom(rootPom);
         LinkedHashMap<Path, ReactorModule> modulesByPom = discoverModules(projectRoot);
         validateModules(projectRoot, modulesByPom.values());
+        Path pitHistoryRoot = preparePitHistoryRoot(projectRoot);
 
         Path tempProjectRoot = Files.createTempDirectory("jaipilot-verify-");
         Set<Path> reactorPomPaths = modulesByPom.values().stream()
@@ -57,6 +61,7 @@ public final class MavenReactorBootstrapper {
                     tempProjectRoot.resolve(module.relativePomPath()),
                     jacocoVersion,
                     pitVersion,
+                    pitHistoryRoot,
                     module.rootModule() && "pom".equalsIgnoreCase(rootModel.packaging())
             );
         }
@@ -218,6 +223,7 @@ public final class MavenReactorBootstrapper {
             Path targetPomPath,
             String jacocoVersion,
             String pitVersion,
+            Path pitHistoryRoot,
             boolean rootAggregate
     ) throws IOException {
         Document document = XmlDocumentLoader.load(module.originalPomPath());
@@ -235,8 +241,55 @@ public final class MavenReactorBootstrapper {
                         PITEST_JUNIT5_PLUGIN_VERSION
                 );
             }
+            configurePitPlugin(pitPlugin, module, pitHistoryRoot);
         }
         writeDocument(document, targetPomPath);
+    }
+
+    private void configurePitPlugin(Element pitPlugin, ReactorModule module, Path pitHistoryRoot) {
+        if (pitHistoryRoot == null) {
+            return;
+        }
+
+        Path historyFile = pitHistoryRoot.resolve(historyFileName(module));
+        Element configuration = child(pitPlugin, "configuration", true);
+        upsertText(configuration, "historyInputFile", historyFile.toString());
+        upsertText(configuration, "historyOutputFile", historyFile.toString());
+    }
+
+    private Path preparePitHistoryRoot(Path projectRoot) {
+        String userHome = System.getProperty("user.home", "").trim();
+        if (userHome.isEmpty()) {
+            return null;
+        }
+
+        Path historyRoot = Path.of(userHome, ".jaipilot", "pit-history", projectFingerprint(projectRoot));
+        try {
+            Files.createDirectories(historyRoot);
+            return historyRoot;
+        } catch (IOException | SecurityException exception) {
+            return null;
+        }
+    }
+
+    private String historyFileName(ReactorModule module) {
+        return sanitizeFileName(module.relativePomPath().toString()) + ".bin";
+    }
+
+    private String sanitizeFileName(String value) {
+        return value.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private String projectFingerprint(Path projectRoot) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] fingerprint = digest.digest(projectRoot.toAbsolutePath().normalize()
+                    .toString()
+                    .getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(fingerprint, 0, 16);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is not available", exception);
+        }
     }
 
     private Element ensurePlugin(

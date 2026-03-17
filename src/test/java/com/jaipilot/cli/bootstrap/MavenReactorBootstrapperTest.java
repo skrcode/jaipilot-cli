@@ -42,6 +42,9 @@ class MavenReactorBootstrapperTest {
             assertTrue(mirroredPom.contains("<artifactId>jacoco-maven-plugin</artifactId>"));
             assertTrue(mirroredPom.contains("<artifactId>pitest-maven</artifactId>"));
             assertTrue(mirroredPom.contains("<artifactId>pitest-junit5-plugin</artifactId>"));
+            assertTrue(mirroredPom.contains("<historyInputFile>"));
+            assertTrue(mirroredPom.contains("<historyOutputFile>"));
+            assertTrue(mirroredPom.contains(Path.of(System.getProperty("user.home"), ".jaipilot", "pit-history").toString()));
         } finally {
             mirrorBuild.cleanup();
         }
@@ -124,6 +127,7 @@ class MavenReactorBootstrapperTest {
             String mirroredChildPom = Files.readString(mirrorBuild.tempProjectRoot().resolve("module-a/pom.xml"));
             assertTrue(mirroredRootPom.contains("<artifactId>jacoco-maven-plugin</artifactId>"));
             assertTrue(mirroredChildPom.contains("<artifactId>pitest-maven</artifactId>"));
+            assertTrue(mirroredChildPom.contains("module-a_pom.xml.bin"));
         } finally {
             mirrorBuild.cleanup();
         }

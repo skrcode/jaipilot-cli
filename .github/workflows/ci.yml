@@ -22,15 +22,4 @@ jobs:
         run: ./mvnw -B verify
 
       - name: Smoke test distribution archives
-        run: |
-          ZIP=$(find target/distributions -maxdepth 1 -name 'jaipilot-*.zip' | head -n 1)
-          TGZ=$(find target/distributions -maxdepth 1 -name 'jaipilot-*.tar.gz' | head -n 1)
-          test -n "$ZIP"
-          test -n "$TGZ"
-          mkdir -p target/ci-smoke/zip target/ci-smoke/tar
-          unzip -q "$ZIP" -d target/ci-smoke/zip
-          tar -xzf "$TGZ" -C target/ci-smoke/tar
-          ZIP_DIR=$(find target/ci-smoke/zip -mindepth 1 -maxdepth 1 -type d | head -n 1)
-          TAR_DIR=$(find target/ci-smoke/tar -mindepth 1 -maxdepth 1 -type d | head -n 1)
-          "$ZIP_DIR/bin/jaipilot" --version
-          "$TAR_DIR/bin/jaipilot" --version
+        run: ./scripts/smoke-test-distributions.sh
