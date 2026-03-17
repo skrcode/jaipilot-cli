@@ -1,6 +1,8 @@
 # JAIPilot CLI
 
-`jaipilot verify` runs JaCoCo and PIT for a Maven project and prints a simple `PASS` or `FAIL` report with actionable reasons.
+JAIPilot is a test safety harness for Java Maven applications. `jaipilot verify` runs JaCoCo and PIT so coding agents like Claude Code, Cursor, and Codex can write and refactor code safely while pushing toward high coverage, ideally 100% where practical.
+
+The goal is to give agents strong safety rails: coverage and mutation testing act as the harness that lets them make changes, run checks, inspect gaps, and keep iterating. This follows the idea described in [AI is forcing us to write good code](https://bits.logic.inc/p/ai-is-forcing-us-to-write-good-code).
 
 The target project does not need JaCoCo or PIT configured in its own `pom.xml`.
 
@@ -34,7 +36,7 @@ Run inside any Maven project:
 jaipilot verify
 ```
 
-You can also use JAIPilot alongside coding agents like Claude Code, Cursor, or Codex. Ask the agent to keep running `jaipilot verify`, inspect the failures, add or improve tests, and repeat until coverage and mutation results are maximized.
+Ask the agent to keep running `jaipilot verify`, inspect the failures, add or improve tests, and repeat until coverage and mutation results are maximized.
 
 Set thresholds explicitly:
 
@@ -66,27 +68,3 @@ jaipilot verify --maven-executable /path/to/mvn
 - JUnit 4 and JUnit 5 are supported
 - the command uses a temporary mirrored workspace and does not edit the target repo
 - PIT runs in parallel and reuses history from `~/.jaipilot/pit-history` to speed up repeat runs
-
-## Releasing
-
-JAIPilot ships to Homebrew through the public tap repo `skrcode/homebrew-tap`.
-
-One-time setup:
-
-- create the public GitHub repo `skrcode/homebrew-tap` with default branch `main`
-- run `./scripts/bootstrap-homebrew-tap.sh --tap skrcode/homebrew-tap --remote-url git@github.com:skrcode/homebrew-tap.git --push`
-- add the `GH_PAT` GitHub Actions secret to `skrcode/jaipilot-cli` with write access to this repo and `skrcode/homebrew-tap`
-
-Release flow:
-
-- run `./scripts/preflight-homebrew-release.sh 0.1.0`
-- push a tag like `v0.1.0`
-- watch the release workflow publish the GitHub Release and update the Homebrew tap
-
-The release workflow publishes:
-
-- `jaipilot-<version>.zip`
-- `jaipilot-<version>.tar.gz`
-- The Homebrew formula is generated from the `.zip` artifact.
-
-See [docs/homebrew-release.md](docs/homebrew-release.md) for the full walkthrough.
