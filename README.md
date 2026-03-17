@@ -34,6 +34,8 @@ Run inside any Maven project:
 jaipilot verify
 ```
 
+You can also use JAIPilot alongside coding agents like Claude Code, Cursor, or Codex. Ask the agent to keep running `jaipilot verify`, inspect the failures, add or improve tests, and repeat until coverage and mutation results are maximized.
+
 Set thresholds explicitly:
 
 ```sh
