@@ -40,6 +40,8 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          name: JAIPilot CLI v${{ steps.version.outputs.value }}
+          generate_release_notes: true
           files: |
             target/distributions/jaipilot-${{ steps.version.outputs.value }}.tar.gz
             target/distributions/jaipilot-${{ steps.version.outputs.value }}.tar.gz.sha256
