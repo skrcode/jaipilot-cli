@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 set -eu
-
+# ./scripts/release-build.sh --version 0.3.2 --push
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 POM_FILE="$REPO_ROOT/pom.xml"
