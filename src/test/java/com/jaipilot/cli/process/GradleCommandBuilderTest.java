@@ -49,6 +49,18 @@ class GradleCommandBuilderTest {
     }
 
     @Test
+    void buildsModuleScopedTestCompileCommand() {
+        List<String> command = commandBuilder.buildTestCompile(
+                Path.of("/tmp/project"),
+                Path.of("custom-gradle"),
+                List.of("--stacktrace"),
+                ":clients"
+        );
+
+        assertTrue(command.contains(":clients:testClasses"));
+    }
+
+    @Test
     void buildsSingleTestExecutionCommand() {
         List<String> command = commandBuilder.buildSingleTestExecution(
                 Path.of("/tmp/project"),
@@ -61,6 +73,20 @@ class GradleCommandBuilderTest {
         assertTrue(command.contains("--stacktrace"));
         assertTrue(command.contains("test"));
         assertTrue(command.contains("--tests"));
+        assertTrue(command.contains("com.example.CrashControllerTest"));
+    }
+
+    @Test
+    void buildsModuleScopedSingleTestExecutionCommand() {
+        List<String> command = commandBuilder.buildSingleTestExecution(
+                Path.of("/tmp/project"),
+                Path.of("custom-gradle"),
+                List.of("--stacktrace"),
+                "com.example.CrashControllerTest",
+                ":clients"
+        );
+
+        assertTrue(command.contains(":clients:test"));
         assertTrue(command.contains("com.example.CrashControllerTest"));
     }
 
@@ -81,6 +107,21 @@ class GradleCommandBuilderTest {
         assertTrue(command.contains("test"));
         assertTrue(command.contains("--tests"));
         assertTrue(command.contains("jacocoTestReport"));
+    }
+
+    @Test
+    void buildsModuleScopedSingleTestCoverageCommand() {
+        List<String> command = commandBuilder.buildSingleTestCoverage(
+                Path.of("/tmp/project"),
+                Path.of("custom-gradle"),
+                List.of("--stacktrace"),
+                "com.example.CrashControllerTest",
+                Path.of("/tmp/jacoco-init.gradle"),
+                ":clients"
+        );
+
+        assertTrue(command.contains(":clients:test"));
+        assertTrue(command.contains(":clients:jacocoTestReport"));
     }
 
     @Test

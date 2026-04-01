@@ -7,7 +7,6 @@ import com.jaipilot.cli.model.JunitLlmSessionResult;
 import com.jaipilot.cli.process.BuildTool;
 import com.jaipilot.cli.process.ExecutionResult;
 import com.jaipilot.cli.process.GradleCommandBuilder;
-import com.jaipilot.cli.process.LocalBuildCommandBuilder;
 import com.jaipilot.cli.process.MavenCommandBuilder;
 import com.jaipilot.cli.process.ProcessExecutor;
 import com.jaipilot.cli.report.JacocoReportParser;
@@ -256,6 +255,7 @@ public final class JunitLlmWorkflowRunner {
         return withTargetFileExcluded(outputPath, () -> validateCompilationOnly(
                 buildTool,
                 projectRoot,
+                outputPath,
                 buildExecutable,
                 additionalBuildArgs,
                 timeout
@@ -265,13 +265,13 @@ public final class JunitLlmWorkflowRunner {
     private ValidationFailure validateCompilationOnly(
             BuildTool buildTool,
             Path projectRoot,
+            Path outputPath,
             Path buildExecutable,
             List<String> additionalBuildArgs,
             Duration timeout
     ) throws Exception {
-        LocalBuildCommandBuilder commandBuilder = commandBuilder(buildTool);
         ExecutionResult compileResult = processExecutor.execute(
-                commandBuilder.buildTestCompile(projectRoot, buildExecutable, additionalBuildArgs),
+                buildTestCompileCommand(buildTool, projectRoot, outputPath, buildExecutable, additionalBuildArgs),
                 projectRoot,
                 timeout,
                 false,
@@ -298,10 +298,10 @@ public final class JunitLlmWorkflowRunner {
             double coverageThreshold
     ) throws Exception {
         String testSelector = fileService.deriveTestSelector(outputPath);
-        LocalBuildCommandBuilder commandBuilder = commandBuilder(buildTool);
+        String gradleProjectPath = gradleProjectPath(buildTool, projectRoot, outputPath);
 
         ExecutionResult compileResult = processExecutor.execute(
-                commandBuilder.buildTestCompile(projectRoot, buildExecutable, additionalBuildArgs),
+                buildTestCompileCommand(buildTool, projectRoot, outputPath, buildExecutable, additionalBuildArgs),
                 projectRoot,
                 timeout,
                 false,
@@ -312,7 +312,14 @@ public final class JunitLlmWorkflowRunner {
         }
 
         ExecutionResult testResult = processExecutor.execute(
-                commandBuilder.buildSingleTestExecution(projectRoot, buildExecutable, additionalBuildArgs, testSelector),
+                buildSingleTestExecutionCommand(
+                        buildTool,
+                        projectRoot,
+                        buildExecutable,
+                        additionalBuildArgs,
+                        testSelector,
+                        gradleProjectPath
+                ),
                 projectRoot,
                 timeout,
                 false,
@@ -355,7 +362,8 @@ public final class JunitLlmWorkflowRunner {
                 buildExecutable,
                 additionalBuildArgs,
                 timeout,
-                testSelector
+                testSelector,
+                gradleProjectPath(buildTool, projectRoot, coverageCutPath)
         );
         if (!isSuccessful(coverageResult)) {
             return new ValidationFailure(
@@ -402,7 +410,8 @@ public final class JunitLlmWorkflowRunner {
             Path buildExecutable,
             List<String> additionalBuildArgs,
             Duration timeout,
-            String testSelector
+            String testSelector,
+            String gradleProjectPath
     ) throws Exception {
         return switch (buildTool) {
             case MAVEN -> processExecutor.execute(
@@ -418,7 +427,14 @@ public final class JunitLlmWorkflowRunner {
                     false,
                     QUIET_WRITER
             );
-            case GRADLE -> runGradleCoverageCommand(projectRoot, buildExecutable, additionalBuildArgs, timeout, testSelector);
+            case GRADLE -> runGradleCoverageCommand(
+                    projectRoot,
+                    buildExecutable,
+                    additionalBuildArgs,
+                    timeout,
+                    testSelector,
+                    gradleProjectPath
+            );
         };
     }
 
@@ -427,7 +443,8 @@ public final class JunitLlmWorkflowRunner {
             Path buildExecutable,
             List<String> additionalBuildArgs,
             Duration timeout,
-            String testSelector
+            String testSelector,
+            String gradleProjectPath
     ) throws Exception {
         Path initScript = Files.createTempFile("jaipilot-gradle-jacoco-", ".gradle");
         try {
@@ -438,7 +455,8 @@ public final class JunitLlmWorkflowRunner {
                             buildExecutable,
                             additionalBuildArgs,
                             testSelector,
-                            initScript
+                            initScript,
+                            gradleProjectPath
                     ),
                     projectRoot,
                     timeout,
@@ -555,11 +573,54 @@ public final class JunitLlmWorkflowRunner {
                 ));
     }
 
-    private LocalBuildCommandBuilder commandBuilder(BuildTool buildTool) {
+    private List<String> buildTestCompileCommand(
+            BuildTool buildTool,
+            Path projectRoot,
+            Path outputPath,
+            Path buildExecutable,
+            List<String> additionalBuildArgs
+    ) {
         return switch (buildTool) {
-            case MAVEN -> mavenCommandBuilder;
-            case GRADLE -> gradleCommandBuilder;
+            case MAVEN -> mavenCommandBuilder.buildTestCompile(projectRoot, buildExecutable, additionalBuildArgs);
+            case GRADLE -> gradleCommandBuilder.buildTestCompile(
+                    projectRoot,
+                    buildExecutable,
+                    additionalBuildArgs,
+                    gradleProjectPath(buildTool, projectRoot, outputPath)
+            );
         };
+    }
+
+    private List<String> buildSingleTestExecutionCommand(
+            BuildTool buildTool,
+            Path projectRoot,
+            Path buildExecutable,
+            List<String> additionalBuildArgs,
+            String testSelector,
+            String gradleProjectPath
+    ) {
+        return switch (buildTool) {
+            case MAVEN -> mavenCommandBuilder.buildSingleTestExecution(
+                    projectRoot,
+                    buildExecutable,
+                    additionalBuildArgs,
+                    testSelector
+            );
+            case GRADLE -> gradleCommandBuilder.buildSingleTestExecution(
+                    projectRoot,
+                    buildExecutable,
+                    additionalBuildArgs,
+                    testSelector,
+                    gradleProjectPath
+            );
+        };
+    }
+
+    private String gradleProjectPath(BuildTool buildTool, Path projectRoot, Path sourcePath) {
+        if (buildTool != BuildTool.GRADLE) {
+            return "";
+        }
+        return fileService.deriveGradleProjectPath(projectRoot, sourcePath);
     }
 
     private boolean isSuccessful(ExecutionResult result) {

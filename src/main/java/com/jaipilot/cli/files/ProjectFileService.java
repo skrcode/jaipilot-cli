@@ -129,6 +129,30 @@ public final class ProjectFileService {
         return packageName + "." + className;
     }
 
+    public String deriveGradleProjectPath(Path projectRoot, Path sourcePath) {
+        if (projectRoot == null || sourcePath == null) {
+            return "";
+        }
+
+        Path normalizedProjectRoot = projectRoot.normalize();
+        Path normalizedSourcePath = sourcePath.normalize();
+        if (!normalizedSourcePath.startsWith(normalizedProjectRoot)) {
+            return "";
+        }
+
+        Path projectRelative = normalizedProjectRoot.relativize(normalizedSourcePath);
+        int sourceRootIndex = sourceRootIndex(projectRelative);
+        if (sourceRootIndex <= 0) {
+            return "";
+        }
+
+        StringBuilder builder = new StringBuilder();
+        for (int index = 0; index < sourceRootIndex; index++) {
+            builder.append(':').append(projectRelative.getName(index));
+        }
+        return builder.toString();
+    }
+
     public Path inferCutPathFromTestPath(Path projectRoot, Path testPath) {
         Path normalizedTestPath = testPath.normalize();
         Path normalizedProjectRoot = projectRoot.normalize();
@@ -349,6 +373,16 @@ public final class ProjectFileService {
         return GRADLE_BUILD_FILES.stream()
                 .map(directory::resolve)
                 .anyMatch(Files::isRegularFile);
+    }
+
+    private int sourceRootIndex(Path path) {
+        for (int index = 0; index <= path.getNameCount() - 3; index++) {
+            if (path.getName(index).toString().equals("src")
+                    && path.getName(index + 2).toString().equals("java")) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     private List<Path> preferredCandidates(Path projectRoot, Path preferredSourcePath, String requestedPath) {

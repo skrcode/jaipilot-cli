@@ -1,4 +1,4 @@
-package com.jaipilot.cli.auth;
+package com.jaipilot.cli.update;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jaipilot.cli.util.JaipilotPaths;
@@ -12,7 +12,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Set;
 
-public final class CredentialsStore {
+public final class UpdateSettingsStore {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Set<PosixFilePermission> DIRECTORY_PERMISSIONS =
@@ -22,26 +22,27 @@ public final class CredentialsStore {
 
     private final Path storePath;
 
-    public CredentialsStore() {
+    public UpdateSettingsStore() {
         this(resolveStorePath());
     }
 
-    CredentialsStore(Path storePath) {
+    UpdateSettingsStore(Path storePath) {
         this.storePath = storePath;
     }
 
-    public TokenInfo load() {
+    public UpdateSettings load() {
         try {
             if (!Files.isRegularFile(storePath)) {
-                return null;
+                return new UpdateSettings(null, null);
             }
-            return OBJECT_MAPPER.readValue(storePath.toFile(), TokenInfo.class);
+            UpdateSettings settings = OBJECT_MAPPER.readValue(storePath.toFile(), UpdateSettings.class);
+            return settings == null ? new UpdateSettings(null, null) : settings;
         } catch (IOException exception) {
-            return null;
+            return new UpdateSettings(null, null);
         }
     }
 
-    public void save(TokenInfo tokenInfo) {
+    public void save(UpdateSettings settings) {
         Path tempFile = null;
         try {
             Path parent = storePath.getParent();
@@ -50,7 +51,7 @@ public final class CredentialsStore {
                 applyOwnerOnlyPermissions(parent, true);
             }
 
-            byte[] serialized = OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsBytes(tokenInfo);
+            byte[] serialized = OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsBytes(settings);
             tempFile = Files.createTempFile(
                     parent != null ? parent : Path.of(System.getProperty("user.dir")),
                     storePath.getFileName().toString(),
@@ -61,17 +62,9 @@ public final class CredentialsStore {
             moveIntoPlace(tempFile);
             applyOwnerOnlyPermissions(storePath, false);
         } catch (IOException exception) {
-            throw new IllegalStateException("Failed to save credentials to " + storePath, exception);
+            throw new IllegalStateException("Failed to save update settings to " + storePath, exception);
         } finally {
             cleanupTempFile(tempFile);
-        }
-    }
-
-    public void clear() {
-        try {
-            Files.deleteIfExists(storePath);
-        } catch (IOException exception) {
-            throw new IllegalStateException("Failed to clear credentials at " + storePath, exception);
         }
     }
 
@@ -80,7 +73,7 @@ public final class CredentialsStore {
     }
 
     private static Path resolveStorePath() {
-        return JaipilotPaths.resolveConfigHome().resolve("credentials.json");
+        return JaipilotPaths.resolveConfigHome().resolve("update-settings.json");
     }
 
     private void moveIntoPlace(Path tempFile) throws IOException {
@@ -98,7 +91,7 @@ public final class CredentialsStore {
         try {
             Files.deleteIfExists(tempFile);
         } catch (IOException ignored) {
-            // The final credentials file has already been written or the original failure is more important.
+            // The final settings file has already been written or the original failure is more important.
         }
     }
 

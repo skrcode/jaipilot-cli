@@ -35,8 +35,17 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
             Path explicitGradleExecutable,
             List<String> additionalArguments
     ) {
+        return buildTestCompile(projectRoot, explicitGradleExecutable, additionalArguments, "");
+    }
+
+    public List<String> buildTestCompile(
+            Path projectRoot,
+            Path explicitGradleExecutable,
+            List<String> additionalArguments,
+            String gradleProjectPath
+    ) {
         List<String> command = baseCommand(projectRoot, explicitGradleExecutable, additionalArguments);
-        command.add("testClasses");
+        command.add(qualifyTask(gradleProjectPath, "testClasses"));
         return command;
     }
 
@@ -47,8 +56,18 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
             List<String> additionalArguments,
             String testSelector
     ) {
+        return buildSingleTestExecution(projectRoot, explicitGradleExecutable, additionalArguments, testSelector, "");
+    }
+
+    public List<String> buildSingleTestExecution(
+            Path projectRoot,
+            Path explicitGradleExecutable,
+            List<String> additionalArguments,
+            String testSelector,
+            String gradleProjectPath
+    ) {
         List<String> command = baseCommand(projectRoot, explicitGradleExecutable, additionalArguments);
-        command.add("test");
+        command.add(qualifyTask(gradleProjectPath, "test"));
         command.add("--tests");
         command.add(testSelector);
         return command;
@@ -61,13 +80,31 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
             String testSelector,
             Path initScriptPath
     ) {
+        return buildSingleTestCoverage(
+                projectRoot,
+                explicitGradleExecutable,
+                additionalArguments,
+                testSelector,
+                initScriptPath,
+                ""
+        );
+    }
+
+    public List<String> buildSingleTestCoverage(
+            Path projectRoot,
+            Path explicitGradleExecutable,
+            List<String> additionalArguments,
+            String testSelector,
+            Path initScriptPath,
+            String gradleProjectPath
+    ) {
         List<String> command = baseCommand(projectRoot, explicitGradleExecutable, additionalArguments);
         command.add("-I");
         command.add(initScriptPath.toString());
-        command.add("test");
+        command.add(qualifyTask(gradleProjectPath, "test"));
         command.add("--tests");
         command.add(testSelector);
-        command.add("jacocoTestReport");
+        command.add(qualifyTask(gradleProjectPath, "jacocoTestReport"));
         return command;
     }
 
@@ -121,5 +158,12 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
             current = current.getParent();
         }
         return null;
+    }
+
+    private String qualifyTask(String gradleProjectPath, String taskName) {
+        if (gradleProjectPath == null || gradleProjectPath.isBlank()) {
+            return taskName;
+        }
+        return gradleProjectPath + ':' + taskName;
     }
 }

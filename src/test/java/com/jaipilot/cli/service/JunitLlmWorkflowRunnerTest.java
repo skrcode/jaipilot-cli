@@ -167,6 +167,58 @@ class JunitLlmWorkflowRunnerTest {
     }
 
     @Test
+    void runBuildsScopesGradleCommandsToOwningModule() throws Exception {
+        Path projectRoot = tempDir.resolve("gradle-multiproject");
+        write(projectRoot.resolve("settings.gradle.kts"), "rootProject.name = \"workspace\"");
+        write(projectRoot.resolve("build.gradle.kts"), "plugins { java }");
+        Path cutPath = write(
+                projectRoot.resolve("clients/src/main/java/com/example/CrashController.java"),
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path outputPath = projectRoot.resolve("clients/src/test/java/com/example/CrashControllerTest.java");
+        Path fakeGradle = writeFakeGradle(projectRoot);
+
+        StubBackendClient backendClient = new StubBackendClient();
+        ProjectFileService fileService = new ProjectFileService();
+        JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
+                backendClient,
+                fileService,
+                new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json")),
+                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter()))
+        );
+        JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
+                sessionRunner,
+                new MavenCommandBuilder(),
+                new GradleCommandBuilder(),
+                new ProcessExecutor(),
+                fileService
+        );
+
+        JunitLlmSessionResult result = workflowRunner.run(new JunitLlmSessionRequest(
+                projectRoot,
+                cutPath,
+                outputPath,
+                JunitLlmOperation.GENERATE,
+                null,
+                "",
+                "",
+                null
+        ), fakeGradle, List.of(), Duration.ofSeconds(10), 5, 0.0d);
+
+        assertEquals("session-1", result.sessionId());
+        List<String> commandLog = Files.readAllLines(projectRoot.resolve("gradle-commands.log"));
+        assertEquals(3, commandLog.size());
+        assertTrue(commandLog.get(0).contains(":clients:testClasses"));
+        assertTrue(commandLog.get(1).contains(":clients:testClasses"));
+        assertTrue(commandLog.get(2).contains(":clients:test --tests com.example.CrashControllerTest"));
+    }
+
+    @Test
     void runAllowsExistingTargetTestCompileFailureDuringPreflight() throws Exception {
         Path projectRoot = tempDir.resolve("preflight-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");

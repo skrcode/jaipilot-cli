@@ -108,6 +108,8 @@ mkdir -p "$SMOKE_DIR"
   --bin-dir "$SMOKE_DIR/bin" \
   --app-dir "$SMOKE_DIR/app"
 
+[ -L "$SMOKE_DIR/app/current" ] || die "Install did not create the current symlink"
+[ -x "$SMOKE_DIR/app/bin/jaipilot" ] || die "Install did not create the stable app launcher"
 "$SMOKE_DIR/bin/jaipilot" --version
 
 echo "Smoke-tested install script"

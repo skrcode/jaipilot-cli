@@ -43,6 +43,15 @@ class ProjectFileServiceTest {
     }
 
     @Test
+    void deriveGradleProjectPathUsesModulePrefixBeforeSourceRoot() {
+        Path projectRoot = Path.of("/tmp/project");
+        Path cutPath = projectRoot.resolve("storage/api/src/main/java/com/example/CrashController.java");
+
+        assertEquals(":storage:api", projectFileService.deriveGradleProjectPath(projectRoot, cutPath));
+        assertEquals("", projectFileService.deriveGradleProjectPath(projectRoot, projectRoot.resolve("src/main/java/com/example/CrashController.java")));
+    }
+
+    @Test
     void deriveTestSelectorUsesPackageAndClassName() throws Exception {
         Path testPath = tempDir.resolve("src/test/java/com/example/CrashControllerTest.java");
         Files.createDirectories(testPath.getParent());

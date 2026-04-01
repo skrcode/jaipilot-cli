@@ -71,7 +71,7 @@ class JunitLlmCommandHelpIntegrationTest {
     }
 
     @Test
-    void rootHelpListsDoctorCommand() {
+    void rootHelpListsDoctorAndUpdateCommands() {
         StringWriter outBuffer = new StringWriter();
         CommandLine commandLine = new CommandLine(new JaiPilotCli())
                 .setOut(new PrintWriter(outBuffer, true))
@@ -81,6 +81,7 @@ class JunitLlmCommandHelpIntegrationTest {
 
         assertEquals(0, exitCode);
         assertTrue(outBuffer.toString().contains("doctor"));
+        assertTrue(outBuffer.toString().contains("update"));
     }
 
     private String executeHelp(String command) {

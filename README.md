@@ -69,6 +69,34 @@ Bundled-runtime releases target:
 
 Make sure `~/.local/bin` is on your `PATH`.
 
+## Update
+
+Update to the latest release with:
+
+```sh
+jaipilot update
+```
+
+Check without installing:
+
+```sh
+jaipilot update --check
+```
+
+Enable automatic startup installs when a new release is available:
+
+```sh
+jaipilot update --enable-auto-updates
+```
+
+Disable them again with:
+
+```sh
+jaipilot update --disable-auto-updates
+```
+
+JAIPilot checks for updates on startup for installer-managed installs. Set `JAIPILOT_DISABLE_UPDATE_CHECK=true` to skip startup checks entirely.
+
 ## Quick Start
 
 Run inside a Maven or Gradle project:

@@ -6,6 +6,8 @@ PREFIX="${HOME}/.local"
 BIN_DIR=""
 APP_DIR=""
 VERSION=""
+RESOLVED_VERSION=""
+RESOLVED_PLATFORM=""
 ARCHIVE_URL=""
 CHECKSUM_URL=""
 PLATFORM=""
@@ -91,6 +93,14 @@ resolve_latest_version() {
   strip_v "$version"
 }
 
+resolve_version() {
+  if [ -n "$VERSION" ]; then
+    printf '%s\n' "$VERSION"
+    return
+  fi
+  resolve_latest_version
+}
+
 resolve_os() {
   case "$(uname -s)" in
     Linux) printf 'linux\n' ;;
@@ -121,13 +131,7 @@ resolve_archive_url() {
     return
   fi
 
-  if [ -n "$VERSION" ]; then
-    resolved_version=$VERSION
-  else
-    resolved_version=$(resolve_latest_version)
-  fi
-  resolved_platform=$(resolve_platform)
-  printf 'https://github.com/%s/releases/download/v%s/jaipilot-%s-%s.tar.gz\n' "$REPO" "$resolved_version" "$resolved_version" "$resolved_platform"
+  printf 'https://github.com/%s/releases/download/v%s/jaipilot-%s-%s.tar.gz\n' "$REPO" "$RESOLVED_VERSION" "$RESOLVED_VERSION" "$RESOLVED_PLATFORM"
 }
 
 resolve_checksum_url() {
@@ -210,6 +214,8 @@ require_command curl
 require_command tar
 require_command mktemp
 
+RESOLVED_VERSION=$(resolve_version)
+RESOLVED_PLATFORM=$(resolve_platform)
 ARCHIVE_URL=$(resolve_archive_url)
 CHECKSUM_URL=$(resolve_checksum_url "$ARCHIVE_URL")
 
@@ -234,8 +240,23 @@ EXTRACTED_DIR=$(find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)
 [ -x "$EXTRACTED_DIR/runtime/bin/java" ] || die "Downloaded archive is missing the bundled Java runtime."
 
 mkdir -p "$BIN_DIR" "$(dirname "$APP_DIR")"
-rm -rf "$APP_DIR"
-cp -R "$EXTRACTED_DIR" "$APP_DIR"
+mkdir -p "$APP_DIR/bin" "$APP_DIR/versions"
+
+VERSION_DIR="$APP_DIR/versions/$RESOLVED_VERSION"
+rm -rf "$VERSION_DIR"
+mv "$EXTRACTED_DIR" "$VERSION_DIR"
+
+rm -f "$APP_DIR/current"
+ln -s "versions/$RESOLVED_VERSION" "$APP_DIR/current"
+
+cat > "$APP_DIR/bin/jaipilot" <<EOF
+#!/usr/bin/env sh
+set -eu
+BASE_DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")/.." && pwd)
+exec "\$BASE_DIR/current/bin/jaipilot" "\$@"
+EOF
+
+chmod +x "$APP_DIR/bin/jaipilot"
 
 cat > "$BIN_DIR/jaipilot" <<EOF
 #!/usr/bin/env sh
@@ -246,10 +267,13 @@ EOF
 chmod +x "$BIN_DIR/jaipilot"
 
 echo "Installed JAIPilot"
+echo "  Version: $RESOLVED_VERSION"
 echo "  Archive: $ARCHIVE_URL"
 echo "  SHA-256: $ACTUAL_SHA256"
 echo "  App: $APP_DIR"
-echo "  Runtime: $APP_DIR/runtime/bin/java"
+echo "  Current: $APP_DIR/current"
+echo "  Payload: $VERSION_DIR"
+echo "  Runtime: $APP_DIR/current/runtime/bin/java"
 echo "  Launcher: $BIN_DIR/jaipilot"
 
 if contains_path_entry "$BIN_DIR"; then
