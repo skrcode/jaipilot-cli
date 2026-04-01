@@ -97,7 +97,7 @@ class HttpJunitLlmBackendClientTest {
         AtomicReference<String> query = new AtomicReference<>();
 
         server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/functions/v1/fetch-job", exchange -> {
+        server.createContext("/functions/v1/fetch-job-cli", exchange -> {
             query.set(exchange.getRequestURI().getQuery());
             writeJson(
                     exchange,
@@ -124,7 +124,7 @@ class HttpJunitLlmBackendClientTest {
     @Test
     void fetchJobPreservesPlainStringOutputForErrorResponses() throws Exception {
         server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/functions/v1/fetch-job", exchange -> {
+        server.createContext("/functions/v1/fetch-job-cli", exchange -> {
             writeJson(exchange, "{\"status\":\"error\",\"output\":\"backend exploded\"}");
         });
         server.start();

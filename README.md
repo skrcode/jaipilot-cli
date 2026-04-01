@@ -51,17 +51,19 @@ This follows the idea described in [AI is forcing us to write good code](https:/
 Install with:
 
 ```sh
-curl -fsSL https://github.com/skrcode/jaipilot-cli/releases/latest/download/install.sh -o install.sh
-sh install.sh
+curl -fsSL https://jaipilot.com/install.sh | bash
 ```
 
 That installs `jaipilot` into `~/.local/bin` by default, downloads the platform-specific release archive for your machine, and verifies the release archive SHA-256 checksum before unpacking it.
 
+The installer is project-agnostic. You can run it from any directory, and it does not require Maven, Gradle, or an existing local JDK just to install the CLI.
+
 The published installer bundles a tested Java runtime for supported platforms, so you do not need to provide your own local JDK just to run the CLI.
 
-Currently published bundled-runtime archives target:
+Bundled-runtime releases target:
 
 - `linux-x64`
+- `linux-aarch64`
 - `macos-x64`
 - `macos-aarch64`
 
@@ -147,7 +149,7 @@ Sign in once before using the backend-assisted flows:
 jaipilot login
 ```
 
-`jaipilot generate` reads the class under test, infers the output test path and backend metadata, uses any existing test file at that path as the baseline `initialTestClassCode`, submits the request to `invoke-junit-llm-cli`, polls `fetch-job`, follows any requested `requiredContextClassPaths`, writes the returned `finalTestFile`, then runs local Maven `test-compile` and a targeted `test` for the generated class. If either phase fails, JAIPilot sends sanitized Maven output back through the backend `fix` flow and keeps iterating until the target test passes or `--max-fix-attempts` is exhausted.
+`jaipilot generate` reads the class under test, infers the output test path and backend metadata, uses any existing test file at that path as the baseline `initialTestClassCode`, submits the request to `invoke-junit-llm-cli`, polls `fetch-job-cli`, follows any requested `requiredContextClassPaths`, writes the returned `finalTestFile`, then runs local Maven `test-compile` and a targeted `test` for the generated class. If either phase fails, JAIPilot sends sanitized Maven output back through the backend `fix` flow and keeps iterating until the target test passes or `--max-fix-attempts` is exhausted.
 
 `jaipilot fix` does the same, but it starts from the current test class as `initialTestClassCode`, sends an empty CUT payload to the backend fix flow, and automatically captures the first failing local Maven output before calling the backend.
 

@@ -21,7 +21,7 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String INVOKE_PATH = "/functions/v1/invoke-junit-llm-cli";
-    private static final String FETCH_JOB_PATH = "/functions/v1/fetch-job?id=";
+    private static final String FETCH_JOB_PATH = "/functions/v1/fetch-job-cli?id=";
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;

@@ -8,13 +8,16 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             classifier: linux-x64
-          - os: macos-13
+          - os: ubuntu-24.04-arm
+            classifier: linux-aarch64
+          - os: macos-15-intel
             classifier: macos-x64
-          - os: macos-14
+          - os: macos-15
             classifier: macos-aarch64
     runs-on: ${{ matrix.os }}
     permissions:
