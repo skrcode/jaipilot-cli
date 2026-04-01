@@ -50,7 +50,7 @@ public final class ProcessExecutor {
                 return true;
             }
             elapsedMillis += waitMillis;
-            progressWriter.println("PROGRESS: Maven is still running (" + TimeUnit.MILLISECONDS.toSeconds(elapsedMillis)
+            progressWriter.println("PROGRESS: Build is still running (" + TimeUnit.MILLISECONDS.toSeconds(elapsedMillis)
                     + "s elapsed)");
             progressWriter.flush();
         }

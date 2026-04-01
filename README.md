@@ -38,11 +38,11 @@ It is designed to work alongside Claude Code, Cursor, Codex, and similar tools. 
 ## Why JAIPilot
 
 - Backend-assisted JUnit test generation and fix flows
-- Zero-config JaCoCo and PIT verification for Java Maven projects
+- Java verification for Maven and Gradle projects
 - A test safety harness for AI-assisted coding and refactoring
 - Actionable output with exact coverage gaps and mutation failures
-- No changes required in the target project's `pom.xml`
-- Uses a temporary mirrored workspace instead of editing your repo
+- No changes required in Maven target project `pom.xml`
+- Uses a temporary mirrored workspace for Maven verification instead of editing your repo
 
 This follows the idea described in [AI is forcing us to write good code](https://bits.logic.inc/p/ai-is-forcing-us-to-write-good-code): as AI makes code generation cheaper, strong tests become the safety system that keeps quality high.
 
@@ -71,7 +71,7 @@ Make sure `~/.local/bin` is on your `PATH`.
 
 ## Quick Start
 
-Run inside any Maven project:
+Run inside a Maven or Gradle project:
 
 ```sh
 jaipilot verify
@@ -101,10 +101,10 @@ jaipilot verify \
   --mutation-threshold 80
 ```
 
-Use a specific Maven executable:
+Use a specific build executable:
 
 ```sh
-jaipilot verify --maven-executable /path/to/mvn
+jaipilot verify --build-executable /path/to/mvn
 ```
 
 ## Recommended Agent Workflow
@@ -149,9 +149,9 @@ Sign in once before using the backend-assisted flows:
 jaipilot login
 ```
 
-`jaipilot generate` reads the class under test, infers the output test path and backend metadata, uses any existing test file at that path as the baseline `initialTestClassCode`, submits the request to `invoke-junit-llm-cli`, polls `fetch-job-cli`, follows any requested `requiredContextClassPaths`, writes the returned `finalTestFile`, then runs local Maven `test-compile` and a targeted `test` for the generated class. If either phase fails, JAIPilot sends sanitized Maven output back through the backend `fix` flow and keeps iterating until the target test passes or `--max-fix-attempts` is exhausted.
+`jaipilot generate` reads the class under test, infers the output test path and backend metadata, uses any existing test file at that path as the baseline `initialTestClassCode`, submits the request to `invoke-junit-llm-cli`, polls `fetch-job-cli`, follows any requested `requiredContextClassPaths`, writes the returned `finalTestFile`, then runs a local build validation (`test-compile` / targeted `test` for Maven, `testClasses` / targeted `test --tests` for Gradle). Before it starts, JAIPilot also checks that the rest of the project still compiles without the target test file, so unrelated compile failures stop the workflow immediately instead of burning fix attempts. After the targeted test passes, JAIPilot collects JaCoCo coverage for the class under test and keeps iterating through the backend `fix` flow until the configured coverage threshold is met or `--max-fix-attempts` is exhausted.
 
-`jaipilot fix` does the same, but it starts from the current test class as `initialTestClassCode`, sends an empty CUT payload to the backend fix flow, and automatically captures the first failing local Maven output before calling the backend.
+`jaipilot fix` does the same, but it starts from the current test class as `initialTestClassCode`, sends an empty CUT payload to the backend fix flow, and automatically captures the first failing local build or coverage feedback before calling the backend.
 
 Authentication commands:
 
@@ -163,30 +163,30 @@ Common options:
 
 - `JAIPILOT_JWT_TOKEN` can be used instead of a stored login session.
 - `--output` overrides the inferred test file path when needed.
-- `--maven-executable`, `--maven-arg`, `--timeout-seconds`, and `--max-fix-attempts` control the local compile-and-test loop after generation.
+- `--build-executable`, `--build-arg`, `--timeout-seconds`, `--coverage-threshold`, and `--max-fix-attempts` control the local compile-test-coverage loop after generation.
 
 ## How It Works
 
-For `generate` and `fix`, JAIPilot reads the local source files, calls the Supabase edge function, polls the async job endpoint, optionally resubmits requested context classes, uploads sanitized local Maven failure output when a fix pass is needed, and writes the returned test file into your project.
+For `generate` and `fix`, JAIPilot reads the local source files, calls the Supabase edge function, polls the async job endpoint, optionally resubmits requested context classes, uploads sanitized local build failure output when a fix pass is needed, and writes the returned test file into your project.
 
-For `verify`, JAIPilot prepares a temporary mirrored Maven workspace, injects the required JaCoCo and PIT plugins there, runs the verification workflow, parses the generated reports, and prints a simplified summary for humans and agents.
+For `verify`, JAIPilot keeps the existing zero-config mirrored-workspace flow for Maven projects. For Gradle projects, it runs the standard `test`, `jacocoTestReport`, and `pitest` tasks from the project root, parses the generated reports, and prints a simplified summary for humans and agents.
 
-The target project does not need JaCoCo or PIT configured in its own `pom.xml`.
+Maven projects do not need JaCoCo or PIT configured in their own `pom.xml`. Gradle verification expects standard `jacocoTestReport` and `pitest` tasks to be available.
 
 ## Requirements
 
 - Java 17+
-- A Maven project
+- A Maven or Gradle project
 - JUnit 4 or JUnit 5 tests
-- Maven available via `./mvnw` or `mvn`
+- Maven available via `./mvnw` or `mvn`, or Gradle available via `./gradlew` or `gradle`
 - A JAIPilot login session or a valid `JAIPILOT_JWT_TOKEN` for backend-assisted `generate` and `fix`
 
 ## Current Scope
 
-- Maven only
+- Maven and Gradle build support
 - JUnit 4 and JUnit 5 only
 - The target repo is not modified
-- PIT runs in parallel and reuses history from `~/.jaipilot/pit-history` to speed up repeat runs
+- Maven verification uses a temporary mirrored workspace and reuses PIT history from `~/.jaipilot/pit-history` to speed up repeat runs
 
 ## Development
 

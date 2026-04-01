@@ -133,7 +133,7 @@ class JunitLlmSessionRunnerTest {
         assertEquals("package com.example;\nclass DraftTest {}\n", backendClient.requests.get(1).newTestClassCode());
         assertEquals("session-1", result.sessionId());
         assertEquals(
-                "package com.example;\nclass FinalTest {}\n",
+                "package com.example;\n\nclass FinalTest {\n}\n",
                 Files.readString(result.outputPath())
         );
         assertEquals(List.of("com/example/support/Helper.java"), result.usedContextClassPaths());
@@ -232,6 +232,94 @@ class JunitLlmSessionRunnerTest {
                 ),
                 backendClient.requests.get(0).cachedContextClasses()
         );
+    }
+
+    @Test
+    void runResubmitsRequestedContextFromTheSameModule() throws Exception {
+        Files.createDirectories(tempDir.resolve("module-a"));
+        Files.createDirectories(tempDir.resolve("module-b"));
+        Files.writeString(tempDir.resolve("settings.gradle.kts"), "rootProject.name = \"workspace\"");
+        Files.writeString(tempDir.resolve("module-a/build.gradle.kts"), "plugins { java }");
+        Files.writeString(tempDir.resolve("module-b/build.gradle.kts"), "plugins { java }");
+        Path cutPath = write(
+                "module-b/src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        write(
+                "module-a/src/main/java/com/example/RequestedContext.java",
+                """
+                package com.example;
+
+                public class RequestedContext {
+                    public String module() {
+                        return "module-a";
+                    }
+                }
+                """
+        );
+        write(
+                "module-b/src/main/java/com/example/RequestedContext.java",
+                """
+                package com.example;
+
+                public class RequestedContext {
+                    public String module() {
+                        return "module-b";
+                    }
+                }
+                """
+        );
+
+        StubBackendClient backendClient = new StubBackendClient(
+                new FetchJobResponse(
+                        "done",
+                        new FetchJobResponse.FetchJobOutput(
+                                "session-3",
+                                "package com.example;\nclass DraftTest {}\n",
+                                List.of("com/example/RequestedContext.java"),
+                                List.of()
+                        ),
+                        null,
+                        null
+                ),
+                new FetchJobResponse(
+                        "done",
+                        new FetchJobResponse.FetchJobOutput(
+                                "session-3",
+                                "package com.example;\nclass FinalTest {}\n",
+                                List.of(),
+                                List.of()
+                        ),
+                        null,
+                        null
+                )
+        );
+        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
+                backendClient,
+                new ProjectFileService(),
+                new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json")),
+                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter(), true))
+        );
+
+        runner.run(new JunitLlmSessionRequest(
+                tempDir,
+                cutPath,
+                tempDir.resolve("module-b/src/test/java/com/example/CrashControllerTest.java"),
+                JunitLlmOperation.GENERATE,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        assertEquals(2, backendClient.requests.size());
+        assertTrue(backendClient.requests.get(1).contextClasses().get(0).contains("module-b"));
+        assertFalse(backendClient.requests.get(1).contextClasses().get(0).contains("module-a"));
     }
 
     private Path write(String relativePath, String content) throws Exception {

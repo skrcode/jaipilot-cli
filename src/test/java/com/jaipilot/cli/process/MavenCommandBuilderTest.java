@@ -3,13 +3,18 @@ package com.jaipilot.cli.process;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class MavenCommandBuilderTest {
 
     private final MavenCommandBuilder commandBuilder = new MavenCommandBuilder();
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void buildsExpectedGoalsPropertiesAndPomSelection() {
@@ -66,5 +71,33 @@ class MavenCommandBuilderTest {
         assertTrue(command.contains("-Dtest=com.example.CrashControllerTest"));
         assertTrue(command.contains("-Dsurefire.failIfNoSpecifiedTests=false"));
         assertTrue(command.contains("test"));
+    }
+
+    @Test
+    void buildsSingleTestCoverageCommand() {
+        List<String> command = commandBuilder.buildSingleTestCoverage(
+                Path.of("/tmp/project"),
+                Path.of("custom-mvn"),
+                List.of("-DskipITs"),
+                "com.example.CrashControllerTest",
+                "0.8.13"
+        );
+
+        assertEquals("custom-mvn", command.get(0));
+        assertTrue(command.contains("-DskipITs"));
+        assertTrue(command.contains("-Dtest=com.example.CrashControllerTest"));
+        assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.13:prepare-agent"));
+        assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.13:report"));
+    }
+
+    @Test
+    void resolvesWrapperFromAncestorProjectRoot() throws Exception {
+        Path root = tempDir.resolve("repo");
+        Path moduleDir = root.resolve("module-a");
+        Files.createDirectories(moduleDir);
+        Path wrapper = root.resolve("mvnw");
+        Files.writeString(wrapper, "#!/usr/bin/env sh\n");
+
+        assertEquals(wrapper.toString(), commandBuilder.resolveMavenExecutable(moduleDir, null));
     }
 }

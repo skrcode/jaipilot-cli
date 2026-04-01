@@ -199,7 +199,11 @@ public final class JacocoReportParser {
 
         try (Stream<Path> pathStream = Files.walk(buildRoot)) {
             return pathStream
-                    .filter(path -> path.getFileName() != null && "jacoco.xml".equals(path.getFileName().toString()))
+                    .filter(path -> path.getFileName() != null)
+                    .filter(path -> {
+                        String fileName = path.getFileName().toString();
+                        return "jacoco.xml".equals(fileName) || "jacocoTestReport.xml".equals(fileName);
+                    })
                     .filter(this::isModuleJacocoReport)
                     .sorted()
                     .toList();
@@ -209,20 +213,31 @@ public final class JacocoReportParser {
     }
 
     private boolean isModuleJacocoReport(Path reportPath) {
-        Path parent = reportPath.getParent();
-        return parent != null
-                && parent.getFileName() != null
-                && "jacoco".equals(parent.getFileName().toString())
-                && parent.getParent() != null
-                && parent.getParent().getFileName() != null
-                && "site".equals(parent.getParent().getFileName().toString());
+        String normalized = normalizeSeparators(reportPath);
+        return normalized.endsWith("/target/site/jacoco/jacoco.xml")
+                || normalized.endsWith("/build/reports/jacoco/test/jacocoTestReport.xml");
     }
 
     private Path moduleRootFromReport(Path reportPath) {
-        return reportPath.getParent()
-                .getParent()
-                .getParent()
-                .getParent();
+        String normalized = normalizeSeparators(reportPath);
+        if (normalized.endsWith("/target/site/jacoco/jacoco.xml")) {
+            return reportPath.getParent()
+                    .getParent()
+                    .getParent()
+                    .getParent();
+        }
+        if (normalized.endsWith("/build/reports/jacoco/test/jacocoTestReport.xml")) {
+            return reportPath.getParent()
+                    .getParent()
+                    .getParent()
+                    .getParent()
+                    .getParent();
+        }
+        throw new IllegalStateException("Unsupported JaCoCo report path " + reportPath);
+    }
+
+    private String normalizeSeparators(Path path) {
+        return path.toString().replace('\\', '/');
     }
 
     private static String sourceKey(String packageName, String sourceFileName) {

@@ -51,6 +51,19 @@ class PitReportParserTest {
                         Path.of("module-a/src/main/java/com/example/service/PaymentService.java"))));
     }
 
+    @Test
+    void parsesGradlePitReportPaths() throws IOException {
+        copyMutations(tempDir.resolve("module-a/build/reports/pitest/mutations.xml"));
+
+        Optional<PitReport> report = parser.parse(tempDir, tempDir);
+
+        assertTrue(report.isPresent());
+        assertEquals(5, report.get().totalMutations());
+        assertTrue(report.get().actionableMutations().stream()
+                .anyMatch(mutation -> mutation.sourceFilePath().equals(
+                        Path.of("module-a/src/main/java/com/example/service/PaymentService.java"))));
+    }
+
     private void copyMutations(Path target) throws IOException {
         Files.createDirectories(target.getParent());
         Files.copy(resourcePath("mutations.xml"), target);

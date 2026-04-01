@@ -6,7 +6,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-public final class MavenCommandBuilder {
+public final class MavenCommandBuilder implements LocalBuildCommandBuilder {
+
+    @Override
+    public BuildTool buildTool() {
+        return BuildTool.MAVEN;
+    }
 
     public List<String> build(
             Path buildRoot,
@@ -41,6 +46,7 @@ public final class MavenCommandBuilder {
         return command;
     }
 
+    @Override
     public List<String> buildTestCompile(
             Path projectRoot,
             Path explicitMavenExecutable,
@@ -52,6 +58,7 @@ public final class MavenCommandBuilder {
         return command;
     }
 
+    @Override
     public List<String> buildSingleTestExecution(
             Path projectRoot,
             Path explicitMavenExecutable,
@@ -64,6 +71,24 @@ public final class MavenCommandBuilder {
         command.add("-Dsurefire.failIfNoSpecifiedTests=false");
         command.add("-Dtest=" + testSelector);
         command.add("test");
+        return command;
+    }
+
+    public List<String> buildSingleTestCoverage(
+            Path projectRoot,
+            Path explicitMavenExecutable,
+            List<String> additionalArguments,
+            String testSelector,
+            String jacocoVersion
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitMavenExecutable, additionalArguments);
+        command.add("-DskipTests=false");
+        command.add("-DfailIfNoTests=false");
+        command.add("-Dsurefire.failIfNoSpecifiedTests=false");
+        command.add("-Dtest=" + testSelector);
+        command.add("org.jacoco:jacoco-maven-plugin:" + jacocoVersion + ":prepare-agent");
+        command.add("test");
+        command.add("org.jacoco:jacoco-maven-plugin:" + jacocoVersion + ":report");
         return command;
     }
 
@@ -80,8 +105,8 @@ public final class MavenCommandBuilder {
                 .toLowerCase(Locale.ROOT)
                 .contains("win");
         String wrapperName = windows ? "mvnw.cmd" : "mvnw";
-        Path wrapperPath = buildRoot.resolve(wrapperName);
-        if (Files.isRegularFile(wrapperPath)) {
+        Path wrapperPath = findWrapper(buildRoot, wrapperName);
+        if (wrapperPath != null) {
             return wrapperPath.toString();
         }
         return windows ? "mvn.cmd" : "mvn";
@@ -109,5 +134,17 @@ public final class MavenCommandBuilder {
         command.add("-ntp");
         command.addAll(additionalArguments);
         return command;
+    }
+
+    private Path findWrapper(Path buildRoot, String wrapperName) {
+        Path current = buildRoot.normalize();
+        while (current != null) {
+            Path wrapperPath = current.resolve(wrapperName);
+            if (Files.isRegularFile(wrapperPath)) {
+                return wrapperPath;
+            }
+            current = current.getParent();
+        }
+        return null;
     }
 }

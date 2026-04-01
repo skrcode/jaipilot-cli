@@ -83,6 +83,31 @@ class VerificationEvaluatorTest {
         assertTrue(result.buildIssues().get(0).action().contains("pitest-junit5-plugin"));
     }
 
+    @Test
+    void highlightsMissingGradlePitestTaskAsBuildIssue() {
+        VerificationResult result = evaluator.evaluate(
+                Path.of("/tmp/project"),
+                new ExecutionResult(
+                        List.of("gradlew", "test", "jacocoTestReport", "pitest"),
+                        1,
+                        false,
+                        "Task 'pitest' not found in root project 'sample-project'.\n"
+                ),
+                java.util.Optional.empty(),
+                java.util.Optional.empty(),
+                new VerificationThresholds(80.0d, 70.0d, 80.0d, 70.0d),
+                3,
+                null
+        );
+
+        assertFalse(result.successful());
+        assertEquals(
+                "Gradle verification could not find a `pitest` task.",
+                result.buildIssues().get(0).reason()
+        );
+        assertTrue(result.buildIssues().get(0).action().contains("info.solidsoft.pitest"));
+    }
+
     private void copyResource(String fileName, Path target) throws IOException {
         Files.createDirectories(target.getParent());
         Files.copy(resourcePath(fileName), target);

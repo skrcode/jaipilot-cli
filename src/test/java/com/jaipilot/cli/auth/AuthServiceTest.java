@@ -157,7 +157,9 @@ class AuthServiceTest {
             assertEquals(new TokenInfo("access-token", "refresh-token", 9_999_999_999L, "user@example.com"), tokenInfo);
             assertEquals(tokenInfo, storedToken);
             assertTrue(response.body().contains("JAIPilot is connected to the CLI"));
-            assertTrue(response.body().contains("Signed in as: user@example.com"));
+            assertTrue(response.body().contains("CLI sign in complete"));
+            assertTrue(response.body().contains("Signed in as"));
+            assertTrue(response.body().contains("user@example.com"));
             assertTrue(response.body().contains("switch back to your terminal"));
         } finally {
             executor.shutdownNow();

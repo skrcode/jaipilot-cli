@@ -32,6 +32,7 @@
         <revision>0.1.1</revision>
         <maven.compiler.release>17</maven.compiler.release>
         <picocli.version>4.7.7</picocli.version>
+        <javaparser.version>3.27.1</javaparser.version>
         <junit.version>5.11.4</junit.version>
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
@@ -52,6 +53,12 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>2.18.3</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.github.javaparser</groupId>
+            <artifactId>javaparser-core</artifactId>
+            <version>${javaparser.version}</version>
         </dependency>
 
         <dependency>

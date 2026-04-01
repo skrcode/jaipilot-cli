@@ -3,7 +3,10 @@ package com.jaipilot.cli.commands;
 import com.jaipilot.cli.bootstrap.BootstrapException;
 import com.jaipilot.cli.bootstrap.MavenReactorBootstrapper;
 import com.jaipilot.cli.bootstrap.MirrorBuild;
+import com.jaipilot.cli.files.ProjectFileService;
+import com.jaipilot.cli.process.BuildTool;
 import com.jaipilot.cli.process.ExecutionResult;
+import com.jaipilot.cli.process.GradleCommandBuilder;
 import com.jaipilot.cli.process.MavenCommandBuilder;
 import com.jaipilot.cli.process.ProcessExecutor;
 import com.jaipilot.cli.report.JacocoReportParser;
@@ -31,7 +34,7 @@ import picocli.CommandLine.Spec;
 @Command(
         name = "verify",
         mixinStandardHelpOptions = true,
-        description = "Runs JaCoCo and PIT against a Maven project and prints a PASS/FAIL report with actionable reasons."
+        description = "Runs JaCoCo and PIT against a Java project and prints a PASS/FAIL report with actionable reasons."
 )
 public final class VerifyCommand implements Callable<Integer> {
 
@@ -42,7 +45,7 @@ public final class VerifyCommand implements Callable<Integer> {
             names = "--project-root",
             defaultValue = ".",
             paramLabel = "<dir>",
-            description = "Project root containing pom.xml. Default: ${DEFAULT-VALUE}."
+            description = "Project root containing pom.xml, build.gradle(.kts), or settings.gradle(.kts). Default: ${DEFAULT-VALUE}."
     )
     private Path projectRoot;
 
@@ -79,24 +82,24 @@ public final class VerifyCommand implements Callable<Integer> {
     private double mutationThreshold;
 
     @Option(
-            names = "--maven-executable",
+            names = {"--build-executable", "--maven-executable", "--gradle-executable"},
             paramLabel = "<path>",
-            description = "Explicit Maven executable or wrapper path. Defaults to ./mvnw or mvn."
+            description = "Explicit build executable or wrapper path. Defaults to ./mvnw or ./gradlew, then mvn or gradle."
     )
-    private Path mavenExecutable;
+    private Path buildExecutable;
 
     @Option(
-            names = "--maven-arg",
+            names = {"--build-arg", "--maven-arg", "--gradle-arg"},
             paramLabel = "<arg>",
-            description = "Additional argument passed to Maven. Repeat to supply multiple arguments."
+            description = "Additional argument passed to the build tool. Repeat to supply multiple arguments."
     )
-    private List<String> additionalMavenArgs = new ArrayList<>();
+    private List<String> additionalBuildArgs = new ArrayList<>();
 
     @Option(
             names = "--jacoco-version",
             defaultValue = DEFAULT_JACOCO_VERSION,
             paramLabel = "<version>",
-            description = "JaCoCo Maven plugin version to invoke. Default: ${DEFAULT-VALUE}."
+            description = "JaCoCo plugin version used by Maven zero-config verification. Default: ${DEFAULT-VALUE}."
     )
     private String jacocoVersion;
 
@@ -104,7 +107,7 @@ public final class VerifyCommand implements Callable<Integer> {
             names = "--pit-version",
             defaultValue = DEFAULT_PIT_VERSION,
             paramLabel = "<version>",
-            description = "PIT Maven plugin version to invoke. Default: ${DEFAULT-VALUE}."
+            description = "PIT plugin version used by Maven zero-config verification. Default: ${DEFAULT-VALUE}."
     )
     private String pitVersion;
 
@@ -112,7 +115,7 @@ public final class VerifyCommand implements Callable<Integer> {
             names = "--timeout-seconds",
             defaultValue = "1800",
             paramLabel = "<seconds>",
-            description = "Maximum time to wait for Maven execution. Default: ${DEFAULT-VALUE}."
+            description = "Maximum time to wait for build execution. Default: ${DEFAULT-VALUE}."
     )
     private long timeoutSeconds;
 
@@ -126,20 +129,22 @@ public final class VerifyCommand implements Callable<Integer> {
 
     @Option(
             names = "--skip-clean",
-            description = "Skip the initial Maven clean goal."
+            description = "Skip the initial clean task/goal."
     )
     private boolean skipClean;
 
     @Option(
             names = "--verbose",
-            description = "Prints the executed Maven command and streamed Maven output to stderr."
+            description = "Prints the executed build command and streamed build output to stderr."
     )
     private boolean verbose;
 
     @Spec
     private CommandSpec spec;
 
+    private final ProjectFileService fileService;
     private final MavenCommandBuilder commandBuilder;
+    private final GradleCommandBuilder gradleCommandBuilder;
     private final ProcessExecutor processExecutor;
     private final JacocoReportParser jacocoReportParser;
     private final PitReportParser pitReportParser;
@@ -149,7 +154,9 @@ public final class VerifyCommand implements Callable<Integer> {
 
     public VerifyCommand() {
         this(
+                new ProjectFileService(),
                 new MavenCommandBuilder(),
+                new GradleCommandBuilder(),
                 new ProcessExecutor(),
                 new JacocoReportParser(),
                 new PitReportParser(),
@@ -160,7 +167,9 @@ public final class VerifyCommand implements Callable<Integer> {
     }
 
     VerifyCommand(
+            ProjectFileService fileService,
             MavenCommandBuilder commandBuilder,
+            GradleCommandBuilder gradleCommandBuilder,
             ProcessExecutor processExecutor,
             JacocoReportParser jacocoReportParser,
             PitReportParser pitReportParser,
@@ -168,7 +177,9 @@ public final class VerifyCommand implements Callable<Integer> {
             VerificationFormatter verificationFormatter,
             MavenReactorBootstrapper bootstrapper
     ) {
+        this.fileService = fileService;
         this.commandBuilder = commandBuilder;
+        this.gradleCommandBuilder = gradleCommandBuilder;
         this.processExecutor = processExecutor;
         this.jacocoReportParser = jacocoReportParser;
         this.pitReportParser = pitReportParser;
@@ -181,85 +192,47 @@ public final class VerifyCommand implements Callable<Integer> {
     public Integer call() throws Exception {
         PrintWriter out = spec.commandLine().getOut();
         PrintWriter err = spec.commandLine().getErr();
-        Path normalizedProjectRoot = projectRoot.toAbsolutePath().normalize();
-        VerificationThresholds thresholds = new VerificationThresholds(
-                lineCoverageThreshold,
-                branchCoverageThreshold,
-                instructionCoverageThreshold,
-                mutationThreshold
-        );
+        Path requestedProjectRoot = projectRoot.toAbsolutePath().normalize();
+        VerificationThresholds thresholds = thresholdsForEvaluation();
 
         MirrorBuild mirrorBuild = null;
         boolean keepWorkspace = false;
+        Path normalizedProjectRoot = requestedProjectRoot;
 
         try {
-            progress(err, "Inspecting Maven project at " + normalizedProjectRoot);
             validateConfiguration();
+            Path inferredProjectRoot = fileService.findNearestBuildProjectRoot(requestedProjectRoot);
+            normalizedProjectRoot = inferredProjectRoot != null ? inferredProjectRoot : requestedProjectRoot;
+            BuildTool buildTool = fileService.detectBuildTool(normalizedProjectRoot, buildExecutable).orElse(null);
 
-            if (!Files.isRegularFile(normalizedProjectRoot.resolve("pom.xml"))) {
+            if (buildTool == null) {
                 return fail(
                         out,
                         normalizedProjectRoot,
                         thresholds,
                         List.of(new VerificationIssue(
-                                "No pom.xml was found at the provided project root.",
-                                "Run `jaipilot verify` from a Maven project root or pass --project-root."
+                                "No supported build file was found at the provided project root.",
+                                "Run `jaipilot verify` from a Maven or Gradle project root, or pass --project-root."
                         )),
                         null
                 );
             }
 
-            progress(err, "Preparing temporary Maven workspace");
-            mirrorBuild = bootstrapper.prepare(normalizedProjectRoot, jacocoVersion, pitVersion);
-            List<String> command = commandBuilder.build(
-                    mirrorBuild.tempProjectRoot(),
-                    mirrorBuild.buildPomPath(),
-                    mavenExecutable,
-                    additionalMavenArgs,
-                    jacocoVersion,
-                    pitVersion,
-                    skipClean,
-                    mirrorBuild.runAggregateCoverage()
-            );
+            progress(err, "Inspecting " + buildTool.displayName() + " project at " + normalizedProjectRoot);
 
-            if (verbose) {
-                err.println("Running Maven verification from mirrored workspace " + mirrorBuild.tempProjectRoot());
-                err.println(String.join(" ", command));
-                err.flush();
+            VerificationResult verificationResult;
+            if (buildTool == BuildTool.MAVEN) {
+                MavenVerificationRun run = runMavenVerification(normalizedProjectRoot, err);
+                mirrorBuild = run.mirrorBuild();
+                verificationResult = run.result();
+            } else {
+                verificationResult = runGradleVerification(normalizedProjectRoot, err);
             }
 
-            progress(err, "Running Maven tests, JaCoCo, and PIT");
-            ExecutionResult executionResult = processExecutor.execute(
-                    command,
-                    mirrorBuild.tempProjectRoot(),
-                    Duration.ofSeconds(timeoutSeconds),
-                    verbose,
-                    err
-            );
-
-            progress(err, "Parsing JaCoCo and PIT reports");
-            Optional<JacocoReport> jacocoReport = jacocoReportParser.parse(
-                    mirrorBuild.tempProjectRoot(),
-                    normalizedProjectRoot
-            );
-            Optional<PitReport> pitReport = pitReportParser.parse(
-                    mirrorBuild.tempProjectRoot(),
-                    normalizedProjectRoot
-            );
-
-            progress(err, "Evaluating thresholds and formatting the final report");
-            VerificationResult verificationResult = verificationEvaluator.evaluate(
-                    normalizedProjectRoot,
-                    executionResult,
-                    jacocoReport,
-                    pitReport,
-                    thresholds,
-                    maxActionableItems,
-                    null
-            );
             if (verbose && !verificationResult.successful()) {
-                keepWorkspace = true;
-                verificationResult = withDebugWorkspace(verificationResult, mirrorBuild.tempProjectRoot());
+                Path debugWorkspace = mirrorBuild != null ? mirrorBuild.tempProjectRoot() : normalizedProjectRoot;
+                keepWorkspace = mirrorBuild != null;
+                verificationResult = withDebugWorkspace(verificationResult, debugWorkspace);
             }
 
             out.print(verificationFormatter.format(verificationResult));
@@ -308,6 +281,104 @@ public final class VerifyCommand implements Callable<Integer> {
         }
     }
 
+    private MavenVerificationRun runMavenVerification(Path projectRoot, PrintWriter err) throws Exception {
+        if (!Files.isRegularFile(projectRoot.resolve("pom.xml"))) {
+            throw new BootstrapException(new VerificationIssue(
+                    "No pom.xml was found at the provided project root.",
+                    "Run `jaipilot verify` from a Maven project root or pass --project-root."
+            ));
+        }
+
+        progress(err, "Preparing temporary Maven workspace");
+        MirrorBuild mirrorBuild = bootstrapper.prepare(projectRoot, jacocoVersion, pitVersion);
+        List<String> command = commandBuilder.build(
+                mirrorBuild.tempProjectRoot(),
+                mirrorBuild.buildPomPath(),
+                buildExecutable,
+                additionalBuildArgs,
+                jacocoVersion,
+                pitVersion,
+                skipClean,
+                mirrorBuild.runAggregateCoverage()
+        );
+
+        if (verbose) {
+            err.println("Running Maven verification from mirrored workspace " + mirrorBuild.tempProjectRoot());
+            err.println(String.join(" ", command));
+            err.flush();
+        }
+
+        progress(err, "Running Maven tests, JaCoCo, and PIT");
+        ExecutionResult executionResult = processExecutor.execute(
+                command,
+                mirrorBuild.tempProjectRoot(),
+                Duration.ofSeconds(timeoutSeconds),
+                verbose,
+                err
+        );
+
+        progress(err, "Parsing JaCoCo and PIT reports");
+        Optional<JacocoReport> jacocoReport = jacocoReportParser.parse(
+                mirrorBuild.tempProjectRoot(),
+                projectRoot
+        );
+        Optional<PitReport> pitReport = pitReportParser.parse(
+                mirrorBuild.tempProjectRoot(),
+                projectRoot
+        );
+
+        progress(err, "Evaluating thresholds and formatting the final report");
+        VerificationResult verificationResult = verificationEvaluator.evaluate(
+                projectRoot,
+                executionResult,
+                jacocoReport,
+                pitReport,
+                thresholdsForEvaluation(),
+                maxActionableItems,
+                null
+        );
+        return new MavenVerificationRun(mirrorBuild, verificationResult);
+    }
+
+    private VerificationResult runGradleVerification(Path projectRoot, PrintWriter err) throws Exception {
+        List<String> command = gradleCommandBuilder.buildVerification(
+                projectRoot,
+                buildExecutable,
+                additionalBuildArgs,
+                skipClean
+        );
+
+        if (verbose) {
+            err.println("Running Gradle verification from project root " + projectRoot);
+            err.println(String.join(" ", command));
+            err.flush();
+        }
+
+        progress(err, "Running Gradle tests, JaCoCo, and PIT");
+        ExecutionResult executionResult = processExecutor.execute(
+                command,
+                projectRoot,
+                Duration.ofSeconds(timeoutSeconds),
+                verbose,
+                err
+        );
+
+        progress(err, "Parsing JaCoCo and PIT reports");
+        Optional<JacocoReport> jacocoReport = jacocoReportParser.parse(projectRoot, projectRoot);
+        Optional<PitReport> pitReport = pitReportParser.parse(projectRoot, projectRoot);
+
+        progress(err, "Evaluating thresholds and formatting the final report");
+        return verificationEvaluator.evaluate(
+                projectRoot,
+                executionResult,
+                jacocoReport,
+                pitReport,
+                thresholdsForEvaluation(),
+                maxActionableItems,
+                null
+        );
+    }
+
     private VerificationResult withDebugWorkspace(VerificationResult result, Path debugWorkspace) {
         return new VerificationResult(
                 result.projectRoot(),
@@ -338,6 +409,15 @@ public final class VerifyCommand implements Callable<Integer> {
         }
     }
 
+    private VerificationThresholds thresholdsForEvaluation() {
+        return new VerificationThresholds(
+                lineCoverageThreshold,
+                branchCoverageThreshold,
+                instructionCoverageThreshold,
+                mutationThreshold
+        );
+    }
+
     private static void ensurePercentage(String name, double value) {
         if (Double.isNaN(value) || value < 0.0d || value > 100.0d) {
             throw new IllegalArgumentException(name + " must be between 0 and 100.");
@@ -366,5 +446,8 @@ public final class VerifyCommand implements Callable<Integer> {
         out.print(verificationFormatter.formatFailure(projectRoot, thresholds, issues, debugWorkspace));
         out.flush();
         return 1;
+    }
+
+    private record MavenVerificationRun(MirrorBuild mirrorBuild, VerificationResult result) {
     }
 }

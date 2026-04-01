@@ -253,19 +253,33 @@ public final class VerificationEvaluator {
         if (isPitJunit5PluginMissing(output)) {
             return new VerificationIssue(
                     "PIT could not execute the project's JUnit 5 tests because the PIT JUnit 5 plugin is missing.",
-                    "Add org.pitest:pitest-junit5-plugin to the pitest-maven plugin configuration, or rerun with JAIPilot bootstrap on a supported JUnit 5 project."
+                    "Add the PIT JUnit 5 plugin to the build configuration (for Maven, org.pitest:pitest-junit5-plugin), or rerun with JAIPilot bootstrap on a supported JUnit 5 project."
             );
         }
 
         if (isPitUnableToRunTests(output)) {
             return new VerificationIssue(
                     "PIT could not run the project's tests with the detected test engine configuration.",
-                    "Ensure the project uses JUnit 4 or JUnit 5 and that tests pass under Maven before rerunning verification."
+                    "Ensure the project uses JUnit 4 or JUnit 5 and that tests pass under the local build before rerunning verification."
+            );
+        }
+
+        if (isMissingGradlePitestTask(output)) {
+            return new VerificationIssue(
+                    "Gradle verification could not find a `pitest` task.",
+                    "Apply the `info.solidsoft.pitest` plugin in the Gradle project before rerunning verification."
+            );
+        }
+
+        if (isMissingGradleJacocoTask(output)) {
+            return new VerificationIssue(
+                    "Gradle verification could not find a `jacocoTestReport` task.",
+                    "Apply the `jacoco` plugin and enable XML reports in the Gradle project before rerunning verification."
             );
         }
 
         return new VerificationIssue(
-                "Maven verification exited with code " + executionResult.exitCode() + ".",
+                "Build verification exited with code " + executionResult.exitCode() + ".",
                 "Fix the failing build or test error. Output tail: " + tail(executionResult.output(), 6)
         );
     }
@@ -285,13 +299,23 @@ public final class VerificationEvaluator {
                 || normalizedOutput.contains("please check you have correctly installed the pitest plugin for your project's test library");
     }
 
+    private boolean isMissingGradlePitestTask(String output) {
+        String normalizedOutput = output.toLowerCase(Locale.ROOT);
+        return normalizedOutput.contains("task 'pitest' not found");
+    }
+
+    private boolean isMissingGradleJacocoTask(String output) {
+        String normalizedOutput = output.toLowerCase(Locale.ROOT);
+        return normalizedOutput.contains("task 'jacocotestreport' not found");
+    }
+
     private static String tail(String output, int maxLines) {
         List<String> lines = output.lines()
                 .map(String::trim)
                 .filter(line -> !line.isBlank())
                 .toList();
         if (lines.isEmpty()) {
-            return "no Maven output was captured";
+            return "no build output was captured";
         }
         int startIndex = Math.max(0, lines.size() - maxLines);
         return String.join(" | ", lines.subList(startIndex, lines.size()));

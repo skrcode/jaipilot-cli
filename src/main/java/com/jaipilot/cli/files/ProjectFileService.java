@@ -1,5 +1,7 @@
 package com.jaipilot.cli.files;
 
+import com.jaipilot.cli.process.BuildTool;
+import com.jaipilot.cli.util.JavaSourceFormatter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -16,6 +18,12 @@ public final class ProjectFileService {
     private static final List<Path> JAVA_SOURCE_ROOTS = List.of(
             Path.of("src", "main", "java"),
             Path.of("src", "test", "java")
+    );
+    private static final List<String> GRADLE_BUILD_FILES = List.of(
+            "settings.gradle",
+            "settings.gradle.kts",
+            "build.gradle",
+            "build.gradle.kts"
     );
 
     public Path resolvePath(Path projectRoot, Path path) {
@@ -39,7 +47,10 @@ public final class ProjectFileService {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            Files.writeString(path, content, StandardCharsets.UTF_8);
+            String normalizedContent = path.getFileName() != null && path.getFileName().toString().endsWith(".java")
+                    ? JavaSourceFormatter.format(content)
+                    : content;
+            Files.writeString(path, normalizedContent, StandardCharsets.UTF_8);
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to write file " + path, exception);
         }
@@ -76,6 +87,38 @@ public final class ProjectFileService {
         return null;
     }
 
+    public Path findNearestBuildProjectRoot(Path path) {
+        Path current = path.normalize();
+        if (Files.isRegularFile(current)) {
+            current = current.getParent();
+        }
+        while (current != null) {
+            if (containsBuildFile(current)) {
+                return current;
+            }
+            current = current.getParent();
+        }
+        return null;
+    }
+
+    public Optional<BuildTool> detectBuildTool(Path projectRoot, Path explicitBuildExecutable) {
+        Optional<BuildTool> explicitTool = BuildTool.fromExecutable(explicitBuildExecutable);
+        if (explicitTool.isPresent()) {
+            return explicitTool;
+        }
+
+        if (projectRoot == null) {
+            return Optional.empty();
+        }
+        if (Files.isRegularFile(projectRoot.resolve("pom.xml"))) {
+            return Optional.of(BuildTool.MAVEN);
+        }
+        if (containsGradleBuildFile(projectRoot)) {
+            return Optional.of(BuildTool.GRADLE);
+        }
+        return Optional.empty();
+    }
+
     public String deriveTestSelector(Path testPath) {
         String content = readFile(testPath.normalize());
         String className = stripJavaExtension(testPath.getFileName().toString());
@@ -86,9 +129,51 @@ public final class ProjectFileService {
         return packageName + "." + className;
     }
 
+    public Path inferCutPathFromTestPath(Path projectRoot, Path testPath) {
+        Path normalizedTestPath = testPath.normalize();
+        Path normalizedProjectRoot = projectRoot.normalize();
+        if (normalizedTestPath.startsWith(normalizedProjectRoot)) {
+            Path relativeTestPath = normalizedProjectRoot.relativize(normalizedTestPath);
+            Path rewritten = rewriteTestRoot(relativeTestPath);
+            if (rewritten != null) {
+                Path candidate = normalizedProjectRoot.resolve(rewritten).normalize();
+                if (Files.isRegularFile(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+
+        String testFileName = normalizedTestPath.getFileName() == null
+                ? ""
+                : normalizedTestPath.getFileName().toString();
+        for (String suffix : List.of("Test.java", "Tests.java", "IT.java", "ITCase.java")) {
+            if (!testFileName.endsWith(suffix)) {
+                continue;
+            }
+            String candidateName = testFileName.substring(0, testFileName.length() - suffix.length()) + ".java";
+            try (var paths = Files.walk(normalizedProjectRoot)) {
+                Optional<Path> candidate = paths
+                        .filter(Files::isRegularFile)
+                        .filter(path -> path.getFileName() != null && path.getFileName().toString().equals(candidateName))
+                        .filter(path -> normalizeSeparators(path).contains("/src/main/java/"))
+                        .findFirst();
+                if (candidate.isPresent()) {
+                    return candidate.get().normalize();
+                }
+            } catch (IOException exception) {
+                throw new IllegalStateException("Unable to infer class under test for " + testPath, exception);
+            }
+        }
+        return null;
+    }
+
     public List<String> readRequestedContextSources(Path projectRoot, List<String> requestedPaths) {
+        return readRequestedContextSources(projectRoot, null, requestedPaths);
+    }
+
+    public List<String> readRequestedContextSources(Path projectRoot, Path preferredSourcePath, List<String> requestedPaths) {
         return requestedPaths.stream()
-                .map(path -> readFile(resolveRequestedContextPath(projectRoot, path)))
+                .map(path -> readFile(resolveRequestedContextPath(projectRoot, preferredSourcePath, path)))
                 .toList();
     }
 
@@ -98,7 +183,7 @@ public final class ProjectFileService {
         }
 
         return contextPaths.stream()
-                .map(path -> path + " =\n" + readFile(resolveRequestedContextPath(projectRoot, path)))
+                .map(path -> path + " =\n" + readFile(resolveRequestedContextPath(projectRoot, null, path)))
                 .toList();
     }
 
@@ -106,10 +191,14 @@ public final class ProjectFileService {
         Set<String> resolvedPaths = new LinkedHashSet<>();
         for (String importTarget : extractImportTargets(readFile(sourcePath.normalize()))) {
             if (importTarget.endsWith(".*")) {
-                resolvedPaths.addAll(resolveStarImportPaths(projectRoot, importTarget.substring(0, importTarget.length() - 2)));
+                resolvedPaths.addAll(resolveStarImportPaths(
+                        projectRoot,
+                        sourcePath,
+                        importTarget.substring(0, importTarget.length() - 2)
+                ));
                 continue;
             }
-            resolveImportedContextClassPath(projectRoot, importTarget).ifPresent(resolvedPaths::add);
+            resolveImportedContextClassPath(projectRoot, sourcePath, importTarget).ifPresent(resolvedPaths::add);
         }
         return List.copyOf(resolvedPaths);
     }
@@ -121,32 +210,26 @@ public final class ProjectFileService {
         return fileName;
     }
 
-    private Path resolveRequestedContextPath(Path projectRoot, String requestedPath) {
-        return resolveRequestedContextPathIfPresent(projectRoot, requestedPath)
+    private Path resolveRequestedContextPath(Path projectRoot, Path preferredSourcePath, String requestedPath) {
+        return resolveRequestedContextPathIfPresent(projectRoot, preferredSourcePath, requestedPath)
                 .orElseThrow(() -> new IllegalStateException(
                         "Unable to resolve requested context class path " + requestedPath
                 ));
     }
 
-    private Optional<Path> resolveRequestedContextPathIfPresent(Path projectRoot, String requestedPath) {
-        Path normalizedRequestedPath = Path.of(requestedPath.replace('\\', '/'));
-        Path directMatch = projectRoot.resolve(normalizedRequestedPath).normalize();
-        if (Files.isRegularFile(directMatch)) {
-            return Optional.of(directMatch);
-        }
-
-        for (Path sourceRoot : JAVA_SOURCE_ROOTS) {
-            Path sourceRootMatch = projectRoot.resolve(sourceRoot).resolve(normalizedRequestedPath).normalize();
-            if (Files.isRegularFile(sourceRootMatch)) {
-                return Optional.of(sourceRootMatch);
+    private Optional<Path> resolveRequestedContextPathIfPresent(Path projectRoot, Path preferredSourcePath, String requestedPath) {
+        for (Path candidate : preferredCandidates(projectRoot, preferredSourcePath, requestedPath)) {
+            if (Files.isRegularFile(candidate)) {
+                return Optional.of(candidate.normalize());
             }
         }
 
+        String normalizedSuffix = normalizeSuffix(requestedPath);
         try (var paths = Files.walk(projectRoot)) {
-            String suffix = "/" + requestedPath.replace('\\', '/');
             return paths
                     .filter(Files::isRegularFile)
-                    .filter(path -> normalizeSeparators(path).endsWith(suffix))
+                    .sorted(preferredPathComparator(projectRoot, preferredSourcePath, normalizedSuffix))
+                    .filter(path -> matchesRequestedSuffix(projectRoot, path, normalizedSuffix))
                     .findFirst()
                     .map(Path::normalize);
         } catch (IOException exception) {
@@ -154,13 +237,13 @@ public final class ProjectFileService {
         }
     }
 
-    private Optional<String> resolveImportedContextClassPath(Path projectRoot, String importTarget) {
+    private Optional<String> resolveImportedContextClassPath(Path projectRoot, Path sourcePath, String importTarget) {
         String candidate = importTarget;
         while (candidate.contains(".")) {
             String requestedPath = candidate.replace('.', '/') + ".java";
-            Optional<Path> resolvedPath = resolveRequestedContextPathIfPresent(projectRoot, requestedPath);
+            Optional<Path> resolvedPath = resolveRequestedContextPathIfPresent(projectRoot, sourcePath, requestedPath);
             if (resolvedPath.isPresent()) {
-                return Optional.of(toContextClassPath(resolvedPath.get()));
+                return Optional.of(toContextClassPath(projectRoot, resolvedPath.get()));
             }
             int lastDot = candidate.lastIndexOf('.');
             candidate = candidate.substring(0, lastDot);
@@ -168,8 +251,8 @@ public final class ProjectFileService {
         return Optional.empty();
     }
 
-    private List<String> resolveStarImportPaths(Path projectRoot, String importTarget) {
-        Optional<String> importedContextClassPath = resolveImportedContextClassPath(projectRoot, importTarget);
+    private List<String> resolveStarImportPaths(Path projectRoot, Path sourcePath, String importTarget) {
+        Optional<String> importedContextClassPath = resolveImportedContextClassPath(projectRoot, sourcePath, importTarget);
         if (importedContextClassPath.isPresent()) {
             return List.of(importedContextClassPath.get());
         }
@@ -185,7 +268,7 @@ public final class ProjectFileService {
         for (Path sourceRoot : JAVA_SOURCE_ROOTS) {
             Path candidateDirectory = projectRoot.resolve(sourceRoot).resolve(packagePath).normalize();
             if (Files.isDirectory(candidateDirectory)) {
-                resolvedPaths.addAll(readPackageJavaFiles(candidateDirectory));
+                resolvedPaths.addAll(readPackageJavaFiles(projectRoot, candidateDirectory));
             }
         }
 
@@ -195,7 +278,7 @@ public final class ProjectFileService {
                         String normalizedPath = normalizeSeparators(path);
                         return normalizedPath.endsWith(mainSuffix) || normalizedPath.endsWith(testSuffix);
                     })
-                    .forEach(path -> resolvedPaths.addAll(readPackageJavaFiles(path)));
+                    .forEach(path -> resolvedPaths.addAll(readPackageJavaFiles(projectRoot, path)));
         } catch (IOException exception) {
             throw new IllegalStateException("Unable to search wildcard import package " + packageName, exception);
         }
@@ -203,13 +286,13 @@ public final class ProjectFileService {
         return List.copyOf(resolvedPaths);
     }
 
-    private List<String> readPackageJavaFiles(Path directory) {
+    private List<String> readPackageJavaFiles(Path projectRoot, Path directory) {
         try (var paths = Files.list(directory)) {
             return paths
                     .filter(Files::isRegularFile)
                     .filter(path -> path.getFileName() != null && path.getFileName().toString().endsWith(".java"))
                     .sorted(Comparator.comparing(path -> path.getFileName().toString()))
-                    .map(this::toContextClassPath)
+                    .map(path -> toContextClassPath(projectRoot, path))
                     .toList();
         } catch (IOException exception) {
             throw new IllegalStateException("Unable to read package directory " + directory, exception);
@@ -238,8 +321,15 @@ public final class ProjectFileService {
         return importTargets;
     }
 
-    private String toContextClassPath(Path path) {
+    private String toContextClassPath(Path projectRoot, Path path) {
         Path normalizedPath = path.normalize();
+        if (projectRoot != null && normalizedPath.startsWith(projectRoot.normalize())) {
+            Path projectRelative = projectRoot.normalize().relativize(normalizedPath);
+            Path preservedRelative = preserveModulePrefix(projectRelative);
+            if (preservedRelative != null) {
+                return normalizeSeparators(preservedRelative);
+            }
+        }
         for (int index = 0; index <= normalizedPath.getNameCount() - 3; index++) {
             if (normalizedPath.getName(index).toString().equals("src")
                     && (normalizedPath.getName(index + 1).toString().equals("main")
@@ -249,6 +339,142 @@ public final class ProjectFileService {
             }
         }
         return normalizeSeparators(normalizedPath);
+    }
+
+    private boolean containsBuildFile(Path directory) {
+        return Files.isRegularFile(directory.resolve("pom.xml")) || containsGradleBuildFile(directory);
+    }
+
+    private boolean containsGradleBuildFile(Path directory) {
+        return GRADLE_BUILD_FILES.stream()
+                .map(directory::resolve)
+                .anyMatch(Files::isRegularFile);
+    }
+
+    private List<Path> preferredCandidates(Path projectRoot, Path preferredSourcePath, String requestedPath) {
+        List<Path> candidates = new ArrayList<>();
+        for (Path normalizedRequestedPath : requestedPathVariants(requestedPath)) {
+            candidates.add(projectRoot.resolve(normalizedRequestedPath).normalize());
+            for (Path sourceRoot : JAVA_SOURCE_ROOTS) {
+                candidates.add(projectRoot.resolve(sourceRoot).resolve(normalizedRequestedPath).normalize());
+            }
+            for (Path preferredRoot : preferredSearchRoots(projectRoot, preferredSourcePath)) {
+                candidates.add(preferredRoot.resolve(normalizedRequestedPath).normalize());
+                for (Path sourceRoot : JAVA_SOURCE_ROOTS) {
+                    candidates.add(preferredRoot.resolve(sourceRoot).resolve(normalizedRequestedPath).normalize());
+                }
+            }
+        }
+        return candidates.stream()
+                .distinct()
+                .toList();
+    }
+
+    private List<Path> preferredSearchRoots(Path projectRoot, Path preferredSourcePath) {
+        if (preferredSourcePath == null) {
+            return List.of();
+        }
+
+        List<Path> roots = new ArrayList<>();
+        Path normalizedProjectRoot = projectRoot.normalize();
+        Path current = preferredSourcePath.normalize();
+        if (Files.isRegularFile(current)) {
+            current = current.getParent();
+        }
+        while (current != null && current.startsWith(normalizedProjectRoot)) {
+            if (containsBuildFile(current)) {
+                roots.add(current);
+            }
+            current = current.getParent();
+        }
+        return roots.stream().distinct().toList();
+    }
+
+    private List<Path> requestedPathVariants(String requestedPath) {
+        List<String> candidates = new ArrayList<>();
+        String normalized = requestedPath == null ? "" : requestedPath.trim().replace('\\', '/');
+        if (!normalized.isBlank()) {
+            candidates.add(normalized);
+            if (!normalized.endsWith(".java")) {
+                candidates.add(normalized + ".java");
+            }
+            if (normalized.contains(".")) {
+                String dotted = normalized.replace('.', '/');
+                candidates.add(dotted);
+                if (!dotted.endsWith(".java")) {
+                    candidates.add(dotted + ".java");
+                }
+            }
+        }
+        return candidates.stream()
+                .map(Path::of)
+                .distinct()
+                .toList();
+    }
+
+    private Comparator<Path> preferredPathComparator(Path projectRoot, Path preferredSourcePath, String normalizedSuffix) {
+        List<Path> preferredRoots = preferredSearchRoots(projectRoot, preferredSourcePath);
+        return Comparator
+                .comparingInt((Path path) -> preferredRootIndex(preferredRoots, path))
+                .thenComparingInt(path -> relativeDepth(projectRoot, path, normalizedSuffix))
+                .thenComparing(this::normalizeSeparators);
+    }
+
+    private int preferredRootIndex(List<Path> preferredRoots, Path path) {
+        for (int index = 0; index < preferredRoots.size(); index++) {
+            if (path.normalize().startsWith(preferredRoots.get(index))) {
+                return index;
+            }
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private int relativeDepth(Path projectRoot, Path path, String normalizedSuffix) {
+        Path normalizedRoot = projectRoot.normalize();
+        Path normalizedPath = path.normalize();
+        if (!normalizedPath.startsWith(normalizedRoot)) {
+            return Integer.MAX_VALUE;
+        }
+        String relativePath = normalizeSeparators(normalizedRoot.relativize(normalizedPath));
+        if (!relativePath.endsWith(normalizedSuffix)) {
+            return Integer.MAX_VALUE;
+        }
+        return relativePath.length() - normalizedSuffix.length();
+    }
+
+    private boolean matchesRequestedSuffix(Path projectRoot, Path path, String normalizedSuffix) {
+        Path normalizedRoot = projectRoot.normalize();
+        Path normalizedPath = path.normalize();
+        if (!normalizedPath.startsWith(normalizedRoot)) {
+            return false;
+        }
+        String relativePath = normalizeSeparators(normalizedRoot.relativize(normalizedPath));
+        if (relativePath.equals(normalizedSuffix)) {
+            return true;
+        }
+        return relativePath.endsWith("/" + normalizedSuffix);
+    }
+
+    private String normalizeSuffix(String requestedPath) {
+        return requestedPathVariants(requestedPath).stream()
+                .map(this::normalizeSeparators)
+                .findFirst()
+                .orElse("");
+    }
+
+    private Path preserveModulePrefix(Path projectRelative) {
+        for (int index = 0; index <= projectRelative.getNameCount() - 3; index++) {
+            if (projectRelative.getName(index).toString().equals("src")
+                    && (projectRelative.getName(index + 1).toString().equals("main")
+                    || projectRelative.getName(index + 1).toString().equals("test"))
+                    && projectRelative.getName(index + 2).toString().equals("java")) {
+                if (index == 0) {
+                    return null;
+                }
+                return projectRelative;
+            }
+        }
+        return projectRelative;
     }
 
     private Path rewriteSourceRoot(Path projectRelative) {
@@ -268,6 +494,34 @@ public final class ProjectFileService {
             }
         }
         return null;
+    }
+
+    private Path rewriteTestRoot(Path projectRelative) {
+        for (int index = 0; index <= projectRelative.getNameCount() - 3; index++) {
+            if (projectRelative.getName(index).toString().equals("src")
+                    && projectRelative.getName(index + 1).toString().equals("test")
+                    && projectRelative.getName(index + 2).toString().equals("java")) {
+                Path prefix = index == 0 ? null : projectRelative.subpath(0, index);
+                Path suffix = projectRelative.subpath(index + 3, projectRelative.getNameCount());
+                String className = stripTestSuffix(suffix.getFileName().toString());
+                Path suffixParent = suffix.getParent();
+                Path rewrittenSuffix = suffixParent == null ? Path.of(className) : suffixParent.resolve(className);
+                Path mainSourceRoot = Path.of("src", "main", "java");
+                return prefix == null
+                        ? mainSourceRoot.resolve(rewrittenSuffix)
+                        : prefix.resolve(mainSourceRoot).resolve(rewrittenSuffix);
+            }
+        }
+        return null;
+    }
+
+    private String stripTestSuffix(String fileName) {
+        for (String suffix : List.of("Test.java", "Tests.java", "IT.java", "ITCase.java")) {
+            if (fileName.endsWith(suffix)) {
+                return fileName.substring(0, fileName.length() - suffix.length()) + ".java";
+            }
+        }
+        return fileName;
     }
 
     private String extractPackageName(String content) {

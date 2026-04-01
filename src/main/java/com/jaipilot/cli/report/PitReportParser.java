@@ -109,13 +109,9 @@ public final class PitReportParser {
     }
 
     private boolean isPitReport(Path reportPath) {
-        Path parent = reportPath.getParent();
-        return parent != null
-                && parent.getFileName() != null
-                && "pit-reports".equals(parent.getFileName().toString())
-                && parent.getParent() != null
-                && parent.getParent().getFileName() != null
-                && "target".equals(parent.getParent().getFileName().toString());
+        String normalized = normalizeSeparators(reportPath);
+        return normalized.endsWith("/target/pit-reports/mutations.xml")
+                || normalized.endsWith("/build/reports/pitest/mutations.xml");
     }
 
     private static int mutationPriority(PitMutation mutation) {
@@ -144,7 +140,14 @@ public final class PitReportParser {
     }
 
     private Path moduleRootFromReport(Path reportPath) {
-        return reportPath.getParent().getParent().getParent();
+        String normalized = normalizeSeparators(reportPath);
+        if (normalized.endsWith("/target/pit-reports/mutations.xml")) {
+            return reportPath.getParent().getParent().getParent();
+        }
+        if (normalized.endsWith("/build/reports/pitest/mutations.xml")) {
+            return reportPath.getParent().getParent().getParent().getParent();
+        }
+        throw new IllegalStateException("Unsupported PIT report path " + reportPath);
     }
 
     private static String packageName(String className) {
@@ -156,5 +159,9 @@ public final class PitReportParser {
         return sourcePath.startsWith(originalProjectRoot)
                 ? originalProjectRoot.relativize(sourcePath)
                 : sourcePath;
+    }
+
+    private String normalizeSeparators(Path path) {
+        return path.toString().replace('\\', '/');
     }
 }

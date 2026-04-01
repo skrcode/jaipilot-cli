@@ -87,7 +87,11 @@ public final class JunitLlmSessionRunner {
             List<String> requiredContextPaths = output.requiredContextClassPaths();
             if (requiredContextPaths != null && !requiredContextPaths.isEmpty()) {
                 printContextPaths(requiredContextPaths);
-                requestedContextClasses = fileService.readRequestedContextSources(sessionRequest.projectRoot(), requiredContextPaths);
+                requestedContextClasses = fileService.readRequestedContextSources(
+                        sessionRequest.projectRoot(),
+                        sessionRequest.cutPath(),
+                        requiredContextPaths
+                );
                 continue;
             }
 

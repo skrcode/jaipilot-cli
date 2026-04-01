@@ -8,6 +8,7 @@ import com.jaipilot.cli.files.ProjectFileService;
 import com.jaipilot.cli.model.JunitLlmOperation;
 import com.jaipilot.cli.model.JunitLlmSessionRequest;
 import com.jaipilot.cli.model.JunitLlmSessionResult;
+import com.jaipilot.cli.process.GradleCommandBuilder;
 import com.jaipilot.cli.process.MavenCommandBuilder;
 import com.jaipilot.cli.process.ProcessExecutor;
 import com.jaipilot.cli.service.JunitLlmConsoleLogger;
@@ -39,24 +40,24 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
     private Path outputPath;
 
     @Option(
-            names = "--maven-executable",
+            names = {"--build-executable", "--maven-executable", "--gradle-executable"},
             paramLabel = "<path>",
-            description = "Explicit Maven executable or wrapper path. Defaults to ./mvnw or mvn from the project root."
+            description = "Explicit build executable or wrapper path. Defaults to ./mvnw or ./gradlew from the project root, then mvn or gradle."
     )
-    private Path mavenExecutable;
+    private Path buildExecutable;
 
     @Option(
-            names = "--maven-arg",
+            names = {"--build-arg", "--maven-arg", "--gradle-arg"},
             paramLabel = "<arg>",
-            description = "Additional argument passed to Maven during local validation. Repeat to supply multiple arguments."
+            description = "Additional argument passed to the local build during validation. Repeat to supply multiple arguments."
     )
-    private List<String> additionalMavenArgs = new ArrayList<>();
+    private List<String> additionalBuildArgs = new ArrayList<>();
 
     @Option(
             names = "--timeout-seconds",
             defaultValue = "600",
             paramLabel = "<seconds>",
-            description = "Maximum time to wait for each local Maven phase. Default: ${DEFAULT-VALUE}."
+            description = "Maximum time to wait for each local build phase. Default: ${DEFAULT-VALUE}."
     )
     private long timeoutSeconds;
 
@@ -64,9 +65,17 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             names = "--max-fix-attempts",
             defaultValue = "5",
             paramLabel = "<count>",
-            description = "Maximum automatic backend fix attempts after local Maven failures. Default: ${DEFAULT-VALUE}."
+            description = "Maximum automatic backend fix attempts after local build failures. Default: ${DEFAULT-VALUE}."
     )
     private int maxFixAttempts;
+
+    @Option(
+            names = "--coverage-threshold",
+            defaultValue = "80.0",
+            paramLabel = "<percent>",
+            description = "Required minimum JaCoCo line coverage for the class under test during generate/fix. Default: ${DEFAULT-VALUE}."
+    )
+    private double coverageThreshold;
 
     @Spec
     private CommandSpec spec;
@@ -120,6 +129,7 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
                     sessionRunner,
                     new MavenCommandBuilder(),
+                    new GradleCommandBuilder(),
                     new ProcessExecutor(),
                     fileService
             );
@@ -132,7 +142,13 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
                     initialTestClassCode(resolvedOutputPath),
                     "",
                     null
-            ), mavenExecutable, List.copyOf(additionalMavenArgs), Duration.ofSeconds(timeoutSeconds), maxFixAttempts);
+            ),
+                    buildExecutable,
+                    List.copyOf(additionalBuildArgs),
+                    Duration.ofSeconds(timeoutSeconds),
+                    maxFixAttempts,
+                    coverageThreshold
+            );
 
             consoleLogger.announceTestFile(result.outputPath());
             consoleLogger.announceTestFileDiff(initialOutputContent, fileService.readFile(result.outputPath()));
@@ -172,6 +188,12 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
                     "--max-fix-attempts must be zero or greater."
             );
         }
+        if (Double.isNaN(coverageThreshold) || coverageThreshold < 0.0d || coverageThreshold > 100.0d) {
+            throw new CommandLine.ParameterException(
+                    spec.commandLine(),
+                    "--coverage-threshold must be between 0 and 100."
+            );
+        }
     }
 
     private String resolveJwtToken() {
@@ -186,9 +208,9 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
     }
 
     private Path inferProjectRoot(Path workingDirectory, Path resolvedCutPath) {
-        Path inferredProjectRoot = fileService.findNearestMavenProjectRoot(resolvedCutPath);
+        Path inferredProjectRoot = fileService.findNearestBuildProjectRoot(resolvedCutPath);
         if (inferredProjectRoot == null) {
-            inferredProjectRoot = fileService.findNearestMavenProjectRoot(workingDirectory);
+            inferredProjectRoot = fileService.findNearestBuildProjectRoot(workingDirectory);
         }
         return inferredProjectRoot != null ? inferredProjectRoot : workingDirectory;
     }

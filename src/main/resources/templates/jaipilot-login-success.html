@@ -4,15 +4,137 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>JAIPilot Connected</title>
+  <style>
+    :root {
+      --color-primary: #6366F1;
+      --color-accent: #8B5CF6;
+      --color-base-100: #09090B;
+      --color-base-200: #18181B;
+      --color-base-300: #27272A;
+      --color-base-content: #FAFAFA;
+      --color-success: #10B981;
+      --color-muted: #A1A1AA;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color: var(--color-base-content);
+      font-family: Inter, "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif;
+      background:
+        radial-gradient(60rem 32rem at 5% -5%, color-mix(in srgb, var(--color-primary) 30%, transparent), transparent 65%),
+        radial-gradient(52rem 28rem at 100% 100%, color-mix(in srgb, var(--color-accent) 26%, transparent), transparent 70%),
+        linear-gradient(180deg, var(--color-base-100), var(--color-base-200));
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .panel {
+      width: min(860px, 100%);
+      border: 1px solid color-mix(in srgb, var(--color-base-300) 65%, white 10%);
+      border-radius: 24px;
+      background: color-mix(in srgb, var(--color-base-100) 82%, #1f2937 18%);
+      box-shadow: 0 28px 70px rgba(0, 0, 0, 0.45);
+      overflow: hidden;
+    }
+    .shell {
+      position: relative;
+      display: grid;
+      gap: 16px;
+      padding: 34px;
+      background:
+        linear-gradient(145deg, rgba(99, 102, 241, 0.08), rgba(139, 92, 246, 0.05)),
+        rgba(9, 9, 11, 0.84);
+      backdrop-filter: blur(6px);
+    }
+    .badge {
+      width: fit-content;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 7px 13px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #D1FAE5;
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      background: rgba(16, 185, 129, 0.14);
+    }
+    .badge::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--color-success);
+      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.22);
+    }
+    h1 {
+      margin: 4px 0 0;
+      font-size: clamp(30px, 4vw, 44px);
+      letter-spacing: -0.03em;
+      line-height: 1.08;
+    }
+    p {
+      margin: 0;
+      color: #D4D4D8;
+      font-size: 16px;
+      line-height: 1.65;
+      max-width: 62ch;
+    }
+    .meta {
+      margin-top: 6px;
+      border: 1px solid rgba(63, 63, 70, 0.95);
+      border-radius: 14px;
+      background: rgba(24, 24, 27, 0.82);
+      padding: 14px 16px;
+    }
+    .meta-label {
+      color: var(--color-muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .meta-value {
+      color: var(--color-base-content);
+      font-weight: 600;
+      font-size: 15px;
+      word-break: break-word;
+    }
+    .hint {
+      font-size: 13px;
+      color: var(--color-muted);
+    }
+    @media (max-width: 640px) {
+      .shell { padding: 24px 20px; }
+      h1 { font-size: clamp(26px, 7vw, 34px); }
+      p { font-size: 15px; }
+    }
+  </style>
 </head>
-<body style="font-family: 'Segoe UI', sans-serif; padding: 24px;">
+<body>
   <script>
     if (window.history && window.history.replaceState) {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   </script>
-  <h1>JAIPilot is connected to the CLI</h1>
-  <p>Signed in as: {{SIGNED_IN_EMAIL}}</p>
-  <p>You can now safely close this tab and switch back to your terminal</p>
+  <main class="panel" role="main" aria-label="JAIPilot CLI Login Success">
+    <section class="shell">
+      <span class="badge">CLI sign in complete</span>
+      <h1>JAIPilot is connected to the CLI</h1>
+      <p>
+        Sign in is complete. You can now return to your terminal and continue using JAIPilot from the command line.
+      </p>
+
+      <div class="meta">
+        <div class="meta-label">Signed in as</div>
+        <div class="meta-value">{{SIGNED_IN_EMAIL}}</div>
+      </div>
+
+      <p class="hint">You can now safely close this tab and switch back to your terminal</p>
+    </section>
+  </main>
 </body>
 </html>

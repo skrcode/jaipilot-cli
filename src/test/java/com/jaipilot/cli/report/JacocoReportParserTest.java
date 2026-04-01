@@ -63,6 +63,19 @@ class JacocoReportParserTest {
                         Path.of("module-a/src/main/java/com/example/service/OrderService.java"))));
     }
 
+    @Test
+    void parsesGradleJacocoReportPaths() throws IOException {
+        copyJacocoReport(tempDir.resolve("module-a/build/reports/jacoco/test/jacocoTestReport.xml"));
+
+        Optional<JacocoReport> report = parser.parse(tempDir, tempDir);
+
+        assertTrue(report.isPresent());
+        assertEquals(1, report.get().moduleCount());
+        assertTrue(report.get().sourceFiles().stream()
+                .anyMatch(sourceFile -> sourceFile.sourceFilePath().equals(
+                        Path.of("module-a/src/main/java/com/example/service/OrderService.java"))));
+    }
+
     private void copyJacocoReport(Path target) throws IOException {
         Files.createDirectories(target.getParent());
         Files.copy(resourcePath("jacoco.xml"), target);
