@@ -22,7 +22,7 @@ import picocli.CommandLine.Spec;
 @Command(
         name = "doctor",
         mixinStandardHelpOptions = true,
-        description = "Diagnose JAIPilot TLS, trust-store, and proxy configuration."
+        description = "Diagnose JAIPilot TLS and proxy configuration."
 )
 public final class DoctorCommand implements Callable<Integer> {
 
@@ -93,8 +93,7 @@ public final class DoctorCommand implements Callable<Integer> {
 
         out.println("Result: FAILED");
         out.println("Remediation:");
-        out.println("- If you are on a corporate network, configure JAIPILOT_TRUST_STORE / JAIPILOT_TRUST_STORE_PASSWORD.");
-        out.println("- On Windows or macOS, try JAIPILOT_USE_SYSTEM_CA=true.");
+        out.println("- JAIPilot uses the default JVM/OS trust store only. Import your corporate CA into that store if TLS fails.");
         out.println("- Check HTTPS_PROXY/HTTP_PROXY/NO_PROXY or your JVM proxy settings.");
         out.flush();
         return CommandLine.ExitCode.SOFTWARE;

@@ -7,8 +7,6 @@ import java.io.OutputStream;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
@@ -36,11 +34,9 @@ public final class HttpsTestServer implements AutoCloseable {
     private static final String STORE_PASSWORD = "changeit";
 
     private final HttpsServer server;
-    private final Path trustStorePath;
 
-    private HttpsTestServer(HttpsServer server, Path trustStorePath) {
+    private HttpsTestServer(HttpsServer server) {
         this.server = server;
-        this.trustStorePath = trustStorePath;
     }
 
     public static HttpsTestServer start(Consumer<HttpsServer> configurer) throws Exception {
@@ -50,26 +46,17 @@ public final class HttpsTestServer implements AutoCloseable {
         X509Certificate certificate = createCertificate(keyPair);
 
         SSLContext sslContext = buildServerSslContext(keyPair, certificate);
-        Path trustStorePath = writeTrustStore(certificate);
 
         HttpsServer server = HttpsServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.setHttpsConfigurator(new HttpsConfigurator(sslContext));
         configurer.accept(server);
         server.start();
 
-        return new HttpsTestServer(server, trustStorePath);
+        return new HttpsTestServer(server);
     }
 
     public String baseUrl() {
         return "https://127.0.0.1:" + server.getAddress().getPort();
-    }
-
-    public Path trustStorePath() {
-        return trustStorePath;
-    }
-
-    public String trustStorePassword() {
-        return STORE_PASSWORD;
     }
 
     public static void writeJson(com.sun.net.httpserver.HttpExchange exchange, String body) throws IOException {
@@ -93,7 +80,6 @@ public final class HttpsTestServer implements AutoCloseable {
     @Override
     public void close() throws Exception {
         server.stop(0);
-        Files.deleteIfExists(trustStorePath);
     }
 
     private static X509Certificate createCertificate(KeyPair keyPair) throws Exception {
@@ -149,16 +135,5 @@ public final class HttpsTestServer implements AutoCloseable {
         SSLContext sslContext = SSLContext.getInstance("TLS");
         sslContext.init(keyManagerFactory.getKeyManagers(), null, null);
         return sslContext;
-    }
-
-    private static Path writeTrustStore(X509Certificate certificate) throws Exception {
-        Path trustStorePath = Files.createTempFile("jaipilot-trust-store", ".p12");
-        KeyStore trustStore = KeyStore.getInstance("PKCS12");
-        trustStore.load(null, STORE_PASSWORD.toCharArray());
-        trustStore.setCertificateEntry("server", certificate);
-        try (OutputStream outputStream = Files.newOutputStream(trustStorePath)) {
-            trustStore.store(outputStream, STORE_PASSWORD.toCharArray());
-        }
-        return trustStorePath;
     }
 }

@@ -1,14 +1,6 @@
 package com.jaipilot.cli.http;
 
-import java.util.List;
-
 public record JaipilotHttpClientDiagnostics(
-        TrustMode trustMode,
-        String trustStorePath,
-        String trustStoreType,
-        boolean systemCaRequested,
-        List<String> systemCaSources,
-        String systemCaStatus,
         ProxyMode proxyMode,
         String httpsProxy,
         String httpProxy,
@@ -16,10 +8,6 @@ public record JaipilotHttpClientDiagnostics(
 ) {
 
     public JaipilotHttpClientDiagnostics {
-        systemCaSources = systemCaSources == null ? List.of() : List.copyOf(systemCaSources);
-        systemCaStatus = normalizeBlank(systemCaStatus);
-        trustStorePath = normalizeBlank(trustStorePath);
-        trustStoreType = normalizeBlank(trustStoreType);
         httpsProxy = normalizeBlank(httpsProxy);
         httpProxy = normalizeBlank(httpProxy);
         noProxy = normalizeBlank(noProxy);
@@ -27,12 +15,6 @@ public record JaipilotHttpClientDiagnostics(
 
     public static JaipilotHttpClientDiagnostics defaults() {
         return new JaipilotHttpClientDiagnostics(
-                TrustMode.DEFAULT_JSSE,
-                null,
-                null,
-                false,
-                List.of(),
-                "Native system CA merge disabled.",
                 ProxyMode.DIRECT,
                 null,
                 null,
@@ -41,25 +23,7 @@ public record JaipilotHttpClientDiagnostics(
     }
 
     public String trustSummary() {
-        StringBuilder summary = new StringBuilder();
-        if (trustMode == TrustMode.CUSTOM_TRUST_STORE) {
-            summary.append("Custom trust store");
-            if (trustStorePath != null) {
-                summary.append(": ").append(trustStorePath);
-            }
-            if (trustStoreType != null) {
-                summary.append(" (").append(trustStoreType).append(')');
-            }
-        } else {
-            summary.append("Bundled/default JSSE trust roots");
-        }
-
-        if (!systemCaSources.isEmpty()) {
-            summary.append(" + native CA stores ").append(String.join(", ", systemCaSources));
-        } else if (systemCaRequested && systemCaStatus != null) {
-            summary.append(" (native CA merge unavailable: ").append(systemCaStatus).append(')');
-        }
-        return summary.toString();
+        return "Default JVM/OS trust store (no JAIPilot overrides)";
     }
 
     public String proxySummary() {
@@ -81,11 +45,6 @@ public record JaipilotHttpClientDiagnostics(
             case SYSTEM -> "System proxy selector (java.net.useSystemProxies=true)";
             case DIRECT -> "Direct network access";
         };
-    }
-
-    public enum TrustMode {
-        DEFAULT_JSSE,
-        CUSTOM_TRUST_STORE
     }
 
     public enum ProxyMode {

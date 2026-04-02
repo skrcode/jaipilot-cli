@@ -3,28 +3,20 @@ package com.jaipilot.cli.bootstrap;
 import com.jaipilot.cli.report.model.VerificationIssue;
 import com.jaipilot.cli.util.XmlDocumentLoader;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import javax.xml.XMLConstants;
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.transform.OutputKeys;
 import javax.xml.transform.Transformer;
 import javax.xml.transform.TransformerException;
@@ -38,14 +30,11 @@ import org.w3c.dom.NodeList;
 
 public final class MavenReactorBootstrapper {
 
-    private static final String PITEST_JUNIT5_PLUGIN_VERSION = "1.2.2";
-
-    public MirrorBuild prepare(Path projectRoot, String jacocoVersion, String pitVersion) throws IOException {
+    public MirrorBuild prepare(Path projectRoot, String jacocoVersion) throws IOException {
         Path rootPom = projectRoot.resolve("pom.xml");
         PomModel rootModel = readPom(rootPom);
         LinkedHashMap<Path, ReactorModule> modulesByPom = discoverModules(projectRoot);
         validateModules(projectRoot, modulesByPom.values());
-        Path pitHistoryRoot = preparePitHistoryRoot(projectRoot);
 
         Path tempProjectRoot = Files.createTempDirectory("jaipilot-verify-");
         Set<Path> reactorPomPaths = modulesByPom.values().stream()
@@ -57,11 +46,8 @@ public final class MavenReactorBootstrapper {
         for (ReactorModule module : modulesByPom.values()) {
             rewritePom(
                     module,
-                    projectRoot,
                     tempProjectRoot.resolve(module.relativePomPath()),
                     jacocoVersion,
-                    pitVersion,
-                    pitHistoryRoot,
                     module.rootModule() && "pom".equalsIgnoreCase(rootModel.packaging())
             );
         }
@@ -100,8 +86,7 @@ public final class MavenReactorBootstrapper {
                     moduleDir,
                     relativeModuleDir,
                     model.packaging(),
-                    javaModule,
-                    javaModule ? detectTestFramework(moduleDir, model) : TestFramework.NONE
+                    javaModule
             ));
 
             for (String moduleEntry : model.modules()) {
@@ -125,21 +110,10 @@ public final class MavenReactorBootstrapper {
 
     private void validateModules(Path projectRoot, Iterable<ReactorModule> modules) {
         List<String> outsideRoot = new ArrayList<>();
-        List<String> missingFramework = new ArrayList<>();
-        List<String> unsupportedFramework = new ArrayList<>();
 
         for (ReactorModule module : modules) {
             if (!module.originalModuleDir().startsWith(projectRoot)) {
                 outsideRoot.add(module.originalModuleDir().toString());
-                continue;
-            }
-            if (!module.javaModule()) {
-                continue;
-            }
-            if (module.testFramework() == TestFramework.NONE) {
-                missingFramework.add(module.moduleLabel());
-            } else if (module.testFramework() == TestFramework.UNSUPPORTED) {
-                unsupportedFramework.add(module.moduleLabel());
             }
         }
 
@@ -148,22 +122,6 @@ public final class MavenReactorBootstrapper {
                     "Modules outside the requested project root are not supported by the mirrored-reactor bootstrap.",
                     "Move the external modules under the project root or run `jaipilot verify` against a standard in-repo Maven reactor. Modules: "
                             + String.join(", ", outsideRoot)
-            ));
-        }
-
-        if (!missingFramework.isEmpty()) {
-            throw new BootstrapException(new VerificationIssue(
-                    "No supported JUnit 4 or JUnit 5 tests were detected for one or more Java modules.",
-                    "Add JUnit 4 or JUnit 5 tests for the listed modules before running mutation verification. Modules: "
-                            + String.join(", ", missingFramework)
-            ));
-        }
-
-        if (!unsupportedFramework.isEmpty()) {
-            throw new BootstrapException(new VerificationIssue(
-                    "Only JUnit 4 and JUnit 5 are supported for zero-config PIT bootstrap in this version.",
-                    "Migrate the listed modules to JUnit 4 or JUnit 5, or configure the project manually outside JAIPilot. Modules: "
-                            + String.join(", ", unsupportedFramework)
             ));
         }
     }
@@ -219,85 +177,23 @@ public final class MavenReactorBootstrapper {
 
     private void rewritePom(
             ReactorModule module,
-            Path projectRoot,
             Path targetPomPath,
             String jacocoVersion,
-            String pitVersion,
-            Path pitHistoryRoot,
             boolean rootAggregate
     ) throws IOException {
         Document document = XmlDocumentLoader.load(module.originalPomPath());
         Element project = document.getDocumentElement();
         if (module.javaModule() || rootAggregate) {
-            ensurePlugin(project, "org.jacoco", "jacoco-maven-plugin", jacocoVersion, false);
-        }
-        if (module.javaModule()) {
-            Element pitPlugin = ensurePlugin(project, "org.pitest", "pitest-maven", pitVersion, true);
-            if (module.testFramework() == TestFramework.JUNIT5) {
-                ensurePluginDependency(
-                        pitPlugin,
-                        "org.pitest",
-                        "pitest-junit5-plugin",
-                        PITEST_JUNIT5_PLUGIN_VERSION
-                );
-            }
-            configurePitPlugin(pitPlugin, module, pitHistoryRoot);
+            ensurePlugin(project, "org.jacoco", "jacoco-maven-plugin", jacocoVersion);
         }
         writeDocument(document, targetPomPath);
-    }
-
-    private void configurePitPlugin(Element pitPlugin, ReactorModule module, Path pitHistoryRoot) {
-        if (pitHistoryRoot == null) {
-            return;
-        }
-
-        Path historyFile = pitHistoryRoot.resolve(historyFileName(module));
-        Element configuration = child(pitPlugin, "configuration", true);
-        upsertText(configuration, "historyInputFile", historyFile.toString());
-        upsertText(configuration, "historyOutputFile", historyFile.toString());
-    }
-
-    private Path preparePitHistoryRoot(Path projectRoot) {
-        String userHome = System.getProperty("user.home", "").trim();
-        if (userHome.isEmpty()) {
-            return null;
-        }
-
-        Path historyRoot = Path.of(userHome, ".jaipilot", "pit-history", projectFingerprint(projectRoot));
-        try {
-            Files.createDirectories(historyRoot);
-            return historyRoot;
-        } catch (IOException | SecurityException exception) {
-            return null;
-        }
-    }
-
-    private String historyFileName(ReactorModule module) {
-        return sanitizeFileName(module.relativePomPath().toString()) + ".bin";
-    }
-
-    private String sanitizeFileName(String value) {
-        return value.replaceAll("[^A-Za-z0-9._-]", "_");
-    }
-
-    private String projectFingerprint(Path projectRoot) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] fingerprint = digest.digest(projectRoot.toAbsolutePath().normalize()
-                    .toString()
-                    .getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(fingerprint, 0, 16);
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is not available", exception);
-        }
     }
 
     private Element ensurePlugin(
             Element project,
             String groupId,
             String artifactId,
-            String version,
-            boolean ensureConfiguration
+            String version
     ) {
         Element build = child(project, "build", true);
         Element plugins = child(build, "plugins", true);
@@ -309,27 +205,7 @@ public final class MavenReactorBootstrapper {
         upsertText(plugin, "groupId", groupId);
         upsertText(plugin, "artifactId", artifactId);
         upsertText(plugin, "version", version);
-        if (ensureConfiguration) {
-            child(plugin, "configuration", true);
-        }
         return plugin;
-    }
-
-    private void ensurePluginDependency(
-            Element plugin,
-            String groupId,
-            String artifactId,
-            String version
-    ) {
-        Element dependencies = child(plugin, "dependencies", true);
-        Element dependency = findDependency(dependencies, groupId, artifactId);
-        if (dependency == null) {
-            dependency = plugin.getOwnerDocument().createElement("dependency");
-            dependencies.appendChild(dependency);
-        }
-        upsertText(dependency, "groupId", groupId);
-        upsertText(dependency, "artifactId", artifactId);
-        upsertText(dependency, "version", version);
     }
 
     private PomModel readPom(Path pomPath) {
@@ -339,20 +215,6 @@ public final class MavenReactorBootstrapper {
         NodeList moduleNodes = project.getElementsByTagName("module");
         for (int index = 0; index < moduleNodes.getLength(); index++) {
             modules.add(moduleNodes.item(index).getTextContent().trim());
-        }
-
-        Set<String> dependencyCoordinates = new LinkedHashSet<>();
-        NodeList dependencyNodes = project.getElementsByTagName("dependency");
-        for (int index = 0; index < dependencyNodes.getLength(); index++) {
-            Node node = dependencyNodes.item(index);
-            if (!(node instanceof Element dependency)) {
-                continue;
-            }
-            String groupId = text(dependency, "groupId");
-            String artifactId = text(dependency, "artifactId");
-            if (!groupId.isBlank() && !artifactId.isBlank()) {
-                dependencyCoordinates.add(groupId + ":" + artifactId);
-            }
         }
 
         String packaging = directText(project, "packaging");
@@ -368,69 +230,8 @@ public final class MavenReactorBootstrapper {
         return new PomModel(
                 artifactId,
                 packaging,
-                modules,
-                dependencyCoordinates
+                modules
         );
-    }
-
-    private TestFramework detectTestFramework(Path moduleDir, PomModel model) {
-        boolean hasTestSources = hasJavaFiles(moduleDir.resolve("src/test/java"));
-        if (!hasTestSources) {
-            return TestFramework.NONE;
-        }
-
-        boolean junit5Dependency = model.dependencyCoordinates().stream().anyMatch(coordinate ->
-                coordinate.startsWith("org.junit.jupiter:")
-                        || coordinate.startsWith("org.junit.platform:")
-                        || coordinate.startsWith("org.junit.vintage:")
-        );
-        boolean junit4Dependency = model.dependencyCoordinates().contains("junit:junit");
-        boolean testNgDependency = model.dependencyCoordinates().stream().anyMatch(coordinate ->
-                coordinate.startsWith("org.testng:")
-        );
-
-        ImportScanResult imports = scanTestImports(moduleDir.resolve("src/test/java"));
-        if (imports.junit5Imports() || junit5Dependency) {
-            return TestFramework.JUNIT5;
-        }
-        if (imports.junit4Imports() || junit4Dependency) {
-            return TestFramework.JUNIT4;
-        }
-        if (imports.unsupportedImports() || testNgDependency) {
-            return TestFramework.UNSUPPORTED;
-        }
-        return TestFramework.NONE;
-    }
-
-    private ImportScanResult scanTestImports(Path testSourceRoot) {
-        boolean junit4 = false;
-        boolean junit5 = false;
-        boolean unsupported = false;
-
-        if (!Files.isDirectory(testSourceRoot)) {
-            return new ImportScanResult(false, false, false);
-        }
-
-        try (var paths = Files.walk(testSourceRoot)) {
-            for (Path file : (Iterable<Path>) paths.filter(path -> path.toString().endsWith(".java"))::iterator) {
-                String content = Files.readString(file, StandardCharsets.UTF_8);
-                String normalized = content.toLowerCase(Locale.ROOT);
-                junit5 |= normalized.contains("org.junit.jupiter.")
-                        || normalized.contains("org.junit.platform.");
-                junit4 |= normalized.contains("org.junit.test")
-                        || normalized.contains("org.junit.before")
-                        || normalized.contains("org.junit.after")
-                        || normalized.contains("org.junit.runner")
-                        || normalized.contains("org.junit.assert");
-                unsupported |= normalized.contains("org.testng.")
-                        || normalized.contains("spock.lang.")
-                        || normalized.contains("org.junitpioneer.");
-            }
-        } catch (IOException exception) {
-            throw new IllegalStateException("Failed to inspect test sources under " + testSourceRoot, exception);
-        }
-
-        return new ImportScanResult(junit4, junit5, unsupported);
     }
 
     private boolean hasJavaFiles(Path directory) {
@@ -455,22 +256,6 @@ public final class MavenReactorBootstrapper {
             String pluginArtifactId = directText(plugin, "artifactId");
             if (Objects.equals(groupId, pluginGroupId) && Objects.equals(artifactId, pluginArtifactId)) {
                 return plugin;
-            }
-        }
-        return null;
-    }
-
-    private Element findDependency(Element dependencies, String groupId, String artifactId) {
-        NodeList dependencyNodes = dependencies.getChildNodes();
-        for (int index = 0; index < dependencyNodes.getLength(); index++) {
-            Node node = dependencyNodes.item(index);
-            if (!(node instanceof Element dependency) || !"dependency".equals(dependency.getTagName())) {
-                continue;
-            }
-            String dependencyGroupId = directText(dependency, "groupId");
-            String dependencyArtifactId = directText(dependency, "artifactId");
-            if (Objects.equals(groupId, dependencyGroupId) && Objects.equals(artifactId, dependencyArtifactId)) {
-                return dependency;
             }
         }
         return null;
@@ -502,14 +287,6 @@ public final class MavenReactorBootstrapper {
         return child == null ? "" : child.getTextContent().trim();
     }
 
-    private String text(Element parent, String tagName) {
-        NodeList nodes = parent.getElementsByTagName(tagName);
-        if (nodes.getLength() == 0) {
-            return "";
-        }
-        return nodes.item(0).getTextContent().trim();
-    }
-
     private void writeDocument(Document document, Path targetPomPath) throws IOException {
         try {
             TransformerFactory transformerFactory = TransformerFactory.newInstance();
@@ -527,15 +304,7 @@ public final class MavenReactorBootstrapper {
     private record PomModel(
             String artifactId,
             String packaging,
-            List<String> modules,
-            Set<String> dependencyCoordinates
-    ) {
-    }
-
-    private record ImportScanResult(
-            boolean junit4Imports,
-            boolean junit5Imports,
-            boolean unsupportedImports
+            List<String> modules
     ) {
     }
 }

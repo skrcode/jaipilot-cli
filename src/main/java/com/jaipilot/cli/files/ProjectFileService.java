@@ -3,15 +3,21 @@ package com.jaipilot.cli.files;
 import com.jaipilot.cli.process.BuildTool;
 import com.jaipilot.cli.util.JavaSourceFormatter;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 public final class ProjectFileService {
 
@@ -25,6 +31,29 @@ public final class ProjectFileService {
             "build.gradle",
             "build.gradle.kts"
     );
+    private static final List<String> SOURCE_JAR_SUFFIXES = List.of(
+            "-sources.jar",
+            "-source.jar"
+    );
+
+    private final List<Path> dependencySourceSearchRoots;
+    private final Map<String, String> dependencySourceContentCache = new HashMap<>();
+    private final Set<String> missingDependencySourcePaths = new HashSet<>();
+    private List<Path> dependencySourceJars;
+
+    public ProjectFileService() {
+        this(defaultDependencySourceSearchRoots());
+    }
+
+    ProjectFileService(List<Path> dependencySourceSearchRoots) {
+        this.dependencySourceSearchRoots = dependencySourceSearchRoots == null
+                ? List.of()
+                : dependencySourceSearchRoots.stream()
+                        .filter(path -> path != null && !path.toString().isBlank())
+                        .map(Path::normalize)
+                        .distinct()
+                        .toList();
+    }
 
     public Path resolvePath(Path projectRoot, Path path) {
         if (path.isAbsolute()) {
@@ -197,7 +226,7 @@ public final class ProjectFileService {
 
     public List<String> readRequestedContextSources(Path projectRoot, Path preferredSourcePath, List<String> requestedPaths) {
         return requestedPaths.stream()
-                .map(path -> readFile(resolveRequestedContextPath(projectRoot, preferredSourcePath, path)))
+                .map(path -> readRequestedContextSource(projectRoot, preferredSourcePath, path))
                 .toList();
     }
 
@@ -207,7 +236,7 @@ public final class ProjectFileService {
         }
 
         return contextPaths.stream()
-                .map(path -> path + " =\n" + readFile(resolveRequestedContextPath(projectRoot, null, path)))
+                .map(path -> path + " =\n" + readRequestedContextSource(projectRoot, null, path))
                 .toList();
     }
 
@@ -234,11 +263,18 @@ public final class ProjectFileService {
         return fileName;
     }
 
-    private Path resolveRequestedContextPath(Path projectRoot, Path preferredSourcePath, String requestedPath) {
-        return resolveRequestedContextPathIfPresent(projectRoot, preferredSourcePath, requestedPath)
-                .orElseThrow(() -> new IllegalStateException(
-                        "Unable to resolve requested context class path " + requestedPath
-                ));
+    private String readRequestedContextSource(Path projectRoot, Path preferredSourcePath, String requestedPath) {
+        Optional<Path> localPath = resolveRequestedContextPathIfPresent(projectRoot, preferredSourcePath, requestedPath);
+        if (localPath.isPresent()) {
+            return readFile(localPath.get());
+        }
+
+        Optional<DependencySource> dependencySource = resolveDependencySourceIfPresent(requestedPath);
+        if (dependencySource.isPresent()) {
+            return dependencySource.get().content();
+        }
+
+        throw new IllegalStateException("Unable to resolve requested context class path " + requestedPath);
     }
 
     private Optional<Path> resolveRequestedContextPathIfPresent(Path projectRoot, Path preferredSourcePath, String requestedPath) {
@@ -268,6 +304,12 @@ public final class ProjectFileService {
             Optional<Path> resolvedPath = resolveRequestedContextPathIfPresent(projectRoot, sourcePath, requestedPath);
             if (resolvedPath.isPresent()) {
                 return Optional.of(toContextClassPath(projectRoot, resolvedPath.get()));
+            }
+            if (shouldSearchDependencySources(candidate)) {
+                Optional<DependencySource> dependencySource = resolveDependencySourceIfPresent(requestedPath);
+                if (dependencySource.isPresent()) {
+                    return Optional.of(dependencySource.get().contextPath());
+                }
             }
             int lastDot = candidate.lastIndexOf('.');
             candidate = candidate.substring(0, lastDot);
@@ -569,5 +611,160 @@ public final class ProjectFileService {
 
     private String normalizeSeparators(Path path) {
         return path.toString().replace('\\', '/');
+    }
+
+    private boolean shouldSearchDependencySources(String importTarget) {
+        return importTarget != null
+                && !importTarget.startsWith("java.")
+                && !importTarget.startsWith("javax.")
+                && !importTarget.startsWith("jdk.")
+                && !importTarget.startsWith("sun.")
+                && !importTarget.startsWith("com.sun.");
+    }
+
+    private Optional<DependencySource> resolveDependencySourceIfPresent(String requestedPath) {
+        for (Path candidatePath : requestedPathVariants(requestedPath)) {
+            String candidate = normalizeContextPath(normalizeSeparators(candidatePath));
+            if (candidate.isBlank() || !candidate.endsWith(".java")) {
+                continue;
+            }
+            Optional<String> content = readDependencySourceContentIfPresent(candidate);
+            if (content.isPresent()) {
+                return Optional.of(new DependencySource(candidate, content.get()));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<String> readDependencySourceContentIfPresent(String contextPath) {
+        String normalizedContextPath = normalizeContextPath(contextPath);
+        if (normalizedContextPath.isBlank()) {
+            return Optional.empty();
+        }
+        if (dependencySourceContentCache.containsKey(normalizedContextPath)) {
+            return Optional.of(dependencySourceContentCache.get(normalizedContextPath));
+        }
+        if (missingDependencySourcePaths.contains(normalizedContextPath)) {
+            return Optional.empty();
+        }
+
+        for (Path sourceJar : dependencySourceJars()) {
+            Optional<String> content = readSourceJarEntry(sourceJar, normalizedContextPath);
+            if (content.isPresent()) {
+                dependencySourceContentCache.put(normalizedContextPath, content.get());
+                return content;
+            }
+        }
+
+        missingDependencySourcePaths.add(normalizedContextPath);
+        return Optional.empty();
+    }
+
+    private List<Path> dependencySourceJars() {
+        if (dependencySourceJars != null) {
+            return dependencySourceJars;
+        }
+
+        List<Path> jars = new ArrayList<>();
+        for (Path searchRoot : dependencySourceSearchRoots) {
+            if (!Files.isDirectory(searchRoot)) {
+                continue;
+            }
+            try (var paths = Files.walk(searchRoot)) {
+                paths.filter(Files::isRegularFile)
+                        .filter(this::isSourceJar)
+                        .forEach(jars::add);
+            } catch (IOException exception) {
+                // Ignore unreadable dependency caches and continue with the remaining roots.
+            }
+        }
+        dependencySourceJars = jars.stream().distinct().toList();
+        return dependencySourceJars;
+    }
+
+    private boolean isSourceJar(Path path) {
+        String fileName = path.getFileName() == null ? "" : path.getFileName().toString();
+        for (String suffix : SOURCE_JAR_SUFFIXES) {
+            if (fileName.endsWith(suffix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Optional<String> readSourceJarEntry(Path sourceJarPath, String contextPath) {
+        try (ZipFile zipFile = new ZipFile(sourceJarPath.toFile())) {
+            ZipEntry entry = zipFile.getEntry(contextPath);
+            if (entry == null || entry.isDirectory()) {
+                return Optional.empty();
+            }
+            try (InputStream inputStream = zipFile.getInputStream(entry)) {
+                return Optional.of(new String(inputStream.readAllBytes(), StandardCharsets.UTF_8));
+            }
+        } catch (IOException exception) {
+            return Optional.empty();
+        }
+    }
+
+    private String normalizeContextPath(String requestedPath) {
+        if (requestedPath == null || requestedPath.isBlank()) {
+            return "";
+        }
+        String normalized = requestedPath.trim().replace('\\', '/');
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        if (normalized.startsWith("src/main/java/")) {
+            return normalized.substring("src/main/java/".length());
+        }
+        if (normalized.startsWith("src/test/java/")) {
+            return normalized.substring("src/test/java/".length());
+        }
+        int mainSegment = normalized.indexOf("/src/main/java/");
+        if (mainSegment >= 0) {
+            return normalized.substring(mainSegment + "/src/main/java/".length());
+        }
+        int testSegment = normalized.indexOf("/src/test/java/");
+        if (testSegment >= 0) {
+            return normalized.substring(testSegment + "/src/test/java/".length());
+        }
+        return normalized;
+    }
+
+    private static List<Path> defaultDependencySourceSearchRoots() {
+        String userHome = System.getProperty("user.home");
+        if (userHome == null || userHome.isBlank()) {
+            return List.of();
+        }
+
+        Path homePath = Path.of(userHome);
+        List<Path> roots = new ArrayList<>();
+        String m2Repo = System.getenv("M2_REPO");
+        roots.add(m2Repo == null || m2Repo.isBlank()
+                ? homePath.resolve(".m2").resolve("repository")
+                : Path.of(m2Repo));
+
+        String gradleHome = firstNonBlank(System.getenv("GRADLE_USER_HOME"), System.getenv("GRADLE_HOME"));
+        Path gradleBasePath = gradleHome == null
+                ? homePath.resolve(".gradle")
+                : Path.of(gradleHome);
+        roots.add(gradleBasePath.resolve("caches").resolve("modules-2").resolve("files-2.1"));
+        return roots.stream()
+                .map(Path::normalize)
+                .distinct()
+                .toList();
+    }
+
+    private static String firstNonBlank(String primary, String fallback) {
+        if (primary != null && !primary.isBlank()) {
+            return primary;
+        }
+        if (fallback != null && !fallback.isBlank()) {
+            return fallback;
+        }
+        return null;
+    }
+
+    private record DependencySource(String contextPath, String content) {
     }
 }

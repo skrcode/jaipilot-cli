@@ -25,7 +25,6 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
         }
         command.add("test");
         command.add("jacocoTestReport");
-        command.add("pitest");
         return command;
     }
 
@@ -105,6 +104,19 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
         command.add("--tests");
         command.add(testSelector);
         command.add(qualifyTask(gradleProjectPath, "jacocoTestReport"));
+        return command;
+    }
+
+    public List<String> buildDependencySourcesDownload(
+            Path projectRoot,
+            Path explicitGradleExecutable,
+            List<String> additionalArguments,
+            Path initScriptPath
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitGradleExecutable, additionalArguments);
+        command.add("-I");
+        command.add(initScriptPath.toString());
+        command.add("jaipilotDownloadSources");
         return command;
     }
 

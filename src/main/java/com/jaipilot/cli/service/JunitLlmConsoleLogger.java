@@ -23,18 +23,11 @@ public final class JunitLlmConsoleLogger {
     }
 
     public void announceStatus(JunitLlmOperation operation) {
-        if (operation == JunitLlmOperation.FIX) {
-            info("Fixing...");
-            return;
-        }
-        info("Generating...");
+        info("Maximizing coverage...");
     }
 
     public void announceCacheRead(Path filePath, List<String> cachedContextPaths) {
         info("Reading cached context for " + filePath);
-        for (String cachedContextPath : cachedContextPaths) {
-            info("Cached context: " + cachedContextPath);
-        }
     }
 
     public void announceRequiredContextPath(String contextPath) {

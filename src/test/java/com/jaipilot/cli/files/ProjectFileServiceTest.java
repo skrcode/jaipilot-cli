@@ -1,9 +1,12 @@
 package com.jaipilot.cli.files;
 
 import com.jaipilot.cli.process.BuildTool;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -155,6 +158,40 @@ class ProjectFileServiceTest {
     }
 
     @Test
+    void resolveImportedContextClassPathsIncludesDependencySourceImports() throws Exception {
+        Path projectRoot = tempDir.resolve("workspace");
+        Path cutPath = writeSource(
+                projectRoot,
+                "src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                import org.apache.kafka.common.utils.Utils;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path dependencyCacheRoot = tempDir.resolve("m2repo");
+        writeSourceJarEntry(
+                dependencyCacheRoot.resolve("org/apache/kafka/kafka-clients/3.8.0/kafka-clients-3.8.0-sources.jar"),
+                "org/apache/kafka/common/utils/Utils.java",
+                """
+                package org.apache.kafka.common.utils;
+
+                public class Utils {
+                }
+                """
+        );
+        ProjectFileService dependencyAwareFileService = new ProjectFileService(List.of(dependencyCacheRoot));
+
+        assertEquals(
+                List.of("org/apache/kafka/common/utils/Utils.java"),
+                dependencyAwareFileService.resolveImportedContextClassPaths(projectRoot, cutPath)
+        );
+    }
+
+    @Test
     void readCachedContextEntriesFormatsPathAndSource() throws Exception {
         Path projectRoot = tempDir.resolve("petclinic");
         writeSource(
@@ -233,6 +270,43 @@ class ProjectFileServiceTest {
     }
 
     @Test
+    void readRequestedContextSourcesFallsBackToDependencySources() throws Exception {
+        Path projectRoot = tempDir.resolve("workspace");
+        Path cutPath = writeSource(
+                projectRoot,
+                "src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path dependencyCacheRoot = tempDir.resolve("gradle-caches");
+        writeSourceJarEntry(
+                dependencyCacheRoot.resolve("com/google/guava/guava/33.2.1/abc123/guava-33.2.1-sources.jar"),
+                "com/google/common/base/Strings.java",
+                """
+                package com.google.common.base;
+
+                public final class Strings {
+                }
+                """
+        );
+        ProjectFileService dependencyAwareFileService = new ProjectFileService(List.of(dependencyCacheRoot));
+
+        List<String> contextSources = dependencyAwareFileService.readRequestedContextSources(
+                projectRoot,
+                cutPath,
+                List.of("com.google.common.base.Strings")
+        );
+
+        assertEquals(1, contextSources.size());
+        assertTrue(contextSources.get(0).contains("package com.google.common.base;"));
+        assertTrue(contextSources.get(0).contains("class Strings"));
+    }
+
+    @Test
     void inferCutPathFromTestPathRewritesConventionalTestNames() throws Exception {
         Path projectRoot = tempDir.resolve("workspace");
         writeSource(
@@ -277,5 +351,15 @@ class ProjectFileServiceTest {
         Files.createDirectories(path.getParent());
         Files.writeString(path, content);
         return path;
+    }
+
+    private void writeSourceJarEntry(Path jarPath, String entryPath, String sourceCode) throws Exception {
+        Files.createDirectories(jarPath.getParent());
+        try (JarOutputStream outputStream = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            JarEntry entry = new JarEntry(entryPath);
+            outputStream.putNextEntry(entry);
+            outputStream.write(sourceCode.getBytes(StandardCharsets.UTF_8));
+            outputStream.closeEntry();
+        }
     }
 }

@@ -10,11 +10,9 @@ import com.jaipilot.cli.process.GradleCommandBuilder;
 import com.jaipilot.cli.process.MavenCommandBuilder;
 import com.jaipilot.cli.process.ProcessExecutor;
 import com.jaipilot.cli.report.JacocoReportParser;
-import com.jaipilot.cli.report.PitReportParser;
 import com.jaipilot.cli.report.VerificationEvaluator;
 import com.jaipilot.cli.report.VerificationFormatter;
 import com.jaipilot.cli.report.model.JacocoReport;
-import com.jaipilot.cli.report.model.PitReport;
 import com.jaipilot.cli.report.model.VerificationIssue;
 import com.jaipilot.cli.report.model.VerificationResult;
 import com.jaipilot.cli.report.model.VerificationThresholds;
@@ -34,12 +32,11 @@ import picocli.CommandLine.Spec;
 @Command(
         name = "verify",
         mixinStandardHelpOptions = true,
-        description = "Runs JaCoCo and PIT against a Java project and prints a PASS/FAIL report with actionable reasons."
+        description = "Runs JaCoCo against a Java project and prints a PASS/FAIL report with actionable reasons."
 )
 public final class VerifyCommand implements Callable<Integer> {
 
     static final String DEFAULT_JACOCO_VERSION = "0.8.13";
-    static final String DEFAULT_PIT_VERSION = "1.22.0";
 
     @Option(
             names = "--project-root",
@@ -74,14 +71,6 @@ public final class VerifyCommand implements Callable<Integer> {
     private double instructionCoverageThreshold;
 
     @Option(
-            names = "--mutation-threshold",
-            defaultValue = "70.0",
-            paramLabel = "<percent>",
-            description = "Required PIT mutation score percentage. Default: ${DEFAULT-VALUE}."
-    )
-    private double mutationThreshold;
-
-    @Option(
             names = {"--build-executable", "--maven-executable", "--gradle-executable"},
             paramLabel = "<path>",
             description = "Explicit build executable or wrapper path. Defaults to ./mvnw or ./gradlew, then mvn or gradle."
@@ -102,14 +91,6 @@ public final class VerifyCommand implements Callable<Integer> {
             description = "JaCoCo plugin version used by Maven zero-config verification. Default: ${DEFAULT-VALUE}."
     )
     private String jacocoVersion;
-
-    @Option(
-            names = "--pit-version",
-            defaultValue = DEFAULT_PIT_VERSION,
-            paramLabel = "<version>",
-            description = "PIT plugin version used by Maven zero-config verification. Default: ${DEFAULT-VALUE}."
-    )
-    private String pitVersion;
 
     @Option(
             names = "--timeout-seconds",
@@ -147,7 +128,6 @@ public final class VerifyCommand implements Callable<Integer> {
     private final GradleCommandBuilder gradleCommandBuilder;
     private final ProcessExecutor processExecutor;
     private final JacocoReportParser jacocoReportParser;
-    private final PitReportParser pitReportParser;
     private final VerificationEvaluator verificationEvaluator;
     private final VerificationFormatter verificationFormatter;
     private final MavenReactorBootstrapper bootstrapper;
@@ -159,7 +139,6 @@ public final class VerifyCommand implements Callable<Integer> {
                 new GradleCommandBuilder(),
                 new ProcessExecutor(),
                 new JacocoReportParser(),
-                new PitReportParser(),
                 new VerificationEvaluator(),
                 new VerificationFormatter(),
                 new MavenReactorBootstrapper()
@@ -172,7 +151,6 @@ public final class VerifyCommand implements Callable<Integer> {
             GradleCommandBuilder gradleCommandBuilder,
             ProcessExecutor processExecutor,
             JacocoReportParser jacocoReportParser,
-            PitReportParser pitReportParser,
             VerificationEvaluator verificationEvaluator,
             VerificationFormatter verificationFormatter,
             MavenReactorBootstrapper bootstrapper
@@ -182,7 +160,6 @@ public final class VerifyCommand implements Callable<Integer> {
         this.gradleCommandBuilder = gradleCommandBuilder;
         this.processExecutor = processExecutor;
         this.jacocoReportParser = jacocoReportParser;
-        this.pitReportParser = pitReportParser;
         this.verificationEvaluator = verificationEvaluator;
         this.verificationFormatter = verificationFormatter;
         this.bootstrapper = bootstrapper;
@@ -290,14 +267,13 @@ public final class VerifyCommand implements Callable<Integer> {
         }
 
         progress(err, "Preparing temporary Maven workspace");
-        MirrorBuild mirrorBuild = bootstrapper.prepare(projectRoot, jacocoVersion, pitVersion);
+        MirrorBuild mirrorBuild = bootstrapper.prepare(projectRoot, jacocoVersion);
         List<String> command = commandBuilder.build(
                 mirrorBuild.tempProjectRoot(),
                 mirrorBuild.buildPomPath(),
                 buildExecutable,
                 additionalBuildArgs,
                 jacocoVersion,
-                pitVersion,
                 skipClean,
                 mirrorBuild.runAggregateCoverage()
         );
@@ -308,7 +284,7 @@ public final class VerifyCommand implements Callable<Integer> {
             err.flush();
         }
 
-        progress(err, "Running Maven tests, JaCoCo, and PIT");
+        progress(err, "Running Maven tests and JaCoCo");
         ExecutionResult executionResult = processExecutor.execute(
                 command,
                 mirrorBuild.tempProjectRoot(),
@@ -317,12 +293,8 @@ public final class VerifyCommand implements Callable<Integer> {
                 err
         );
 
-        progress(err, "Parsing JaCoCo and PIT reports");
+        progress(err, "Parsing JaCoCo report");
         Optional<JacocoReport> jacocoReport = jacocoReportParser.parse(
-                mirrorBuild.tempProjectRoot(),
-                projectRoot
-        );
-        Optional<PitReport> pitReport = pitReportParser.parse(
                 mirrorBuild.tempProjectRoot(),
                 projectRoot
         );
@@ -332,7 +304,6 @@ public final class VerifyCommand implements Callable<Integer> {
                 projectRoot,
                 executionResult,
                 jacocoReport,
-                pitReport,
                 thresholdsForEvaluation(),
                 maxActionableItems,
                 null
@@ -354,7 +325,7 @@ public final class VerifyCommand implements Callable<Integer> {
             err.flush();
         }
 
-        progress(err, "Running Gradle tests, JaCoCo, and PIT");
+        progress(err, "Running Gradle tests and JaCoCo");
         ExecutionResult executionResult = processExecutor.execute(
                 command,
                 projectRoot,
@@ -363,16 +334,14 @@ public final class VerifyCommand implements Callable<Integer> {
                 err
         );
 
-        progress(err, "Parsing JaCoCo and PIT reports");
+        progress(err, "Parsing JaCoCo report");
         Optional<JacocoReport> jacocoReport = jacocoReportParser.parse(projectRoot, projectRoot);
-        Optional<PitReport> pitReport = pitReportParser.parse(projectRoot, projectRoot);
 
         progress(err, "Evaluating thresholds and formatting the final report");
         return verificationEvaluator.evaluate(
                 projectRoot,
                 executionResult,
                 jacocoReport,
-                pitReport,
                 thresholdsForEvaluation(),
                 maxActionableItems,
                 null
@@ -388,9 +357,6 @@ public final class VerifyCommand implements Callable<Integer> {
                 result.coverageSummary(),
                 result.coverageFindings(),
                 result.omittedCoverageFindings(),
-                result.mutationSummary(),
-                result.mutationFindings(),
-                result.omittedMutationFindings(),
                 result.buildIssues(),
                 debugWorkspace
         );
@@ -400,7 +366,6 @@ public final class VerifyCommand implements Callable<Integer> {
         ensurePercentage("line coverage threshold", lineCoverageThreshold);
         ensurePercentage("branch coverage threshold", branchCoverageThreshold);
         ensurePercentage("instruction coverage threshold", instructionCoverageThreshold);
-        ensurePercentage("mutation threshold", mutationThreshold);
         if (timeoutSeconds <= 0) {
             throw new IllegalArgumentException("--timeout-seconds must be greater than 0.");
         }
@@ -413,8 +378,7 @@ public final class VerifyCommand implements Callable<Integer> {
         return new VerificationThresholds(
                 lineCoverageThreshold,
                 branchCoverageThreshold,
-                instructionCoverageThreshold,
-                mutationThreshold
+                instructionCoverageThreshold
         );
     }
 

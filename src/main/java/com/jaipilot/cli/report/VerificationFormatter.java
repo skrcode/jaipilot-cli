@@ -4,14 +4,11 @@ import com.jaipilot.cli.report.model.CheckResult;
 import com.jaipilot.cli.report.model.CoverageFinding;
 import com.jaipilot.cli.report.model.CoverageMetric;
 import com.jaipilot.cli.report.model.CoverageSummary;
-import com.jaipilot.cli.report.model.MutationFinding;
-import com.jaipilot.cli.report.model.MutationSummary;
 import com.jaipilot.cli.report.model.VerificationIssue;
 import com.jaipilot.cli.report.model.VerificationResult;
 import com.jaipilot.cli.report.model.VerificationThresholds;
 import com.jaipilot.cli.util.PercentFormatter;
 import java.nio.file.Path;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
@@ -30,7 +27,6 @@ public final class VerificationFormatter {
                 .append("line=").append(PercentFormatter.format(result.thresholds().lineCoverageThreshold()))
                 .append(" branch=").append(PercentFormatter.format(result.thresholds().branchCoverageThreshold()))
                 .append(" instruction=").append(PercentFormatter.format(result.thresholds().instructionCoverageThreshold()))
-                .append(" mutation=").append(PercentFormatter.format(result.thresholds().mutationThreshold()))
                 .append(System.lineSeparator());
 
         for (CheckResult check : result.checks()) {
@@ -44,8 +40,6 @@ public final class VerificationFormatter {
 
         appendCoverageSummary(builder, result.coverageSummary());
         appendCoverageFindings(builder, result.coverageFindings(), result.omittedCoverageFindings());
-        appendMutationSummary(builder, result.mutationSummary());
-        appendMutationFindings(builder, result.mutationFindings(), result.omittedMutationFindings());
         appendBuildIssues(builder, result.buildIssues());
 
         if (result.debugWorkspace() != null) {
@@ -74,9 +68,6 @@ public final class VerificationFormatter {
                 null,
                 Map.of(),
                 Map.of(),
-                null,
-                List.of(),
-                0,
                 List.copyOf(buildIssues),
                 debugWorkspace
         ));
@@ -136,49 +127,6 @@ public final class VerificationFormatter {
         }
     }
 
-    private void appendMutationSummary(StringBuilder builder, MutationSummary summary) {
-        if (summary == null) {
-            builder.append("MUTATION_SUMMARY: NOT_AVAILABLE").append(System.lineSeparator());
-            return;
-        }
-        builder.append("MUTATION_SUMMARY: ")
-                .append("total=").append(summary.totalMutations())
-                .append(" detected=").append(summary.detectedMutations())
-                .append(" mutationScore=").append(PercentFormatter.format(summary.mutationScore()))
-                .append(" statuses=").append(formatStatusCounts(summary.statusCounts()))
-                .append(System.lineSeparator());
-    }
-
-    private void appendMutationFindings(
-            StringBuilder builder,
-            List<MutationFinding> findings,
-            int omittedCount
-    ) {
-        if (findings.isEmpty()) {
-            builder.append("MUTATION_FINDING: NONE").append(System.lineSeparator());
-            return;
-        }
-        for (MutationFinding finding : findings) {
-            builder.append("MUTATION_FINDING: ")
-                    .append("module=").append(displayPath(finding.modulePath()))
-                    .append(" file=").append(displayPath(finding.sourceFilePath()))
-                    .append(" class=").append(quoted(orDash(finding.className())))
-                    .append(" method=").append(quoted(orDash(finding.methodName())))
-                    .append(" line=").append(finding.lineNumber() > 0 ? finding.lineNumber() : "-")
-                    .append(" status=").append(finding.status())
-                    .append(" mutator=").append(quoted(orDash(shortMutator(finding.mutator()))))
-                    .append(" testsRun=").append(finding.testsRun() >= 0 ? finding.testsRun() : "-")
-                    .append(" description=").append(quoted(orDash(finding.description())))
-                    .append(" action=").append(quoted(finding.action()))
-                    .append(System.lineSeparator());
-        }
-        if (omittedCount > 0) {
-            builder.append("MUTATION_FINDINGS_OMITTED: count=")
-                    .append(omittedCount)
-                    .append(System.lineSeparator());
-        }
-    }
-
     private void appendBuildIssues(StringBuilder builder, List<VerificationIssue> buildIssues) {
         if (buildIssues.isEmpty()) {
             builder.append("BUILD_ISSUE: NONE").append(System.lineSeparator());
@@ -198,7 +146,7 @@ public final class VerificationFormatter {
         if (!result.buildIssues().isEmpty()) {
             return "Resolve the build issues first, then rerun `jaipilot verify`.";
         }
-        if (!result.coverageFindings().isEmpty() || !result.mutationFindings().isEmpty()) {
+        if (!result.coverageFindings().isEmpty()) {
             return "Implement the listed test improvements, then rerun `jaipilot verify`.";
         }
         return "Use this result as a release gate or agent checkpoint.";
@@ -215,28 +163,12 @@ public final class VerificationFormatter {
         return joiner.toString();
     }
 
-    private static String formatStatusCounts(Map<String, Integer> statusCounts) {
-        if (statusCounts == null || statusCounts.isEmpty()) {
-            return "-";
-        }
-        StringJoiner joiner = new StringJoiner(",");
-        statusCounts.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey(Comparator.naturalOrder()))
-                .forEach(entry -> joiner.add(entry.getKey() + ":" + entry.getValue()));
-        return joiner.toString();
-    }
-
     private static String displayPath(Path path) {
         if (path == null) {
             return "-";
         }
         String value = path.toString();
         return value.isBlank() ? "." : value;
-    }
-
-    private static String shortMutator(String mutator) {
-        int lastDot = mutator.lastIndexOf('.');
-        return lastDot >= 0 ? mutator.substring(lastDot + 1) : mutator;
     }
 
     private static String orDash(String value) {

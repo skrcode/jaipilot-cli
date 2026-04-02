@@ -12,9 +12,6 @@ public record VerificationResult(
         CoverageSummary coverageSummary,
         Map<CoverageMetric, List<CoverageFinding>> coverageFindings,
         Map<CoverageMetric, Integer> omittedCoverageFindings,
-        MutationSummary mutationSummary,
-        List<MutationFinding> mutationFindings,
-        int omittedMutationFindings,
         List<VerificationIssue> buildIssues,
         Path debugWorkspace
 ) {

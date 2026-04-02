@@ -23,8 +23,7 @@ class JaipilotHttpClientFactoryTest {
                         "NO_PROXY", "127.0.0.1,.corp.local"
                 ),
                 systemProperties,
-                new StaticProxySelector("jvm-proxy.local", 9443),
-                "Linux"
+                new StaticProxySelector("jvm-proxy.local", 9443)
         );
 
         List<Proxy> selected = factory.proxySelector().select(URI.create("https://api.example.com"));
@@ -44,8 +43,7 @@ class JaipilotHttpClientFactoryTest {
         JaipilotHttpClientFactory factory = new JaipilotHttpClientFactory(
                 Map.of(),
                 systemProperties,
-                new StaticProxySelector("jvm-proxy.local", 9443),
-                "Linux"
+                new StaticProxySelector("jvm-proxy.local", 9443)
         );
 
         assertEquals(JaipilotHttpClientDiagnostics.ProxyMode.JVM_PROPERTIES, factory.diagnostics().proxyMode());

@@ -5,7 +5,6 @@ import com.jaipilot.cli.files.ProjectFileService;
 import com.jaipilot.cli.model.FetchJobResponse;
 import com.jaipilot.cli.model.InvokeJunitLlmRequest;
 import com.jaipilot.cli.model.InvokeJunitLlmResponse;
-import com.jaipilot.cli.model.JunitLlmOperation;
 import com.jaipilot.cli.model.JunitLlmSessionRequest;
 import com.jaipilot.cli.model.JunitLlmSessionResult;
 import java.nio.file.Path;
@@ -38,14 +37,14 @@ public final class JunitLlmSessionRunner {
     }
 
     public JunitLlmSessionResult run(JunitLlmSessionRequest sessionRequest) throws Exception {
-        boolean isFix = sessionRequest.operation() == JunitLlmOperation.FIX;
-        String cutCode = isFix ? "" : fileService.readFile(sessionRequest.cutPath());
-        String cutName = isFix ? "" : fileService.stripJavaExtension(sessionRequest.cutPath().getFileName().toString());
+        String cutCode = fileService.readFile(sessionRequest.cutPath());
+        String cutName = fileService.stripJavaExtension(sessionRequest.cutPath().getFileName().toString());
         String testClassName = fileService.stripJavaExtension(sessionRequest.outputPath().getFileName().toString());
         Path cacheKeyPath = cacheKeyPath(sessionRequest);
-        List<String> importedContextPaths = isFix
-                ? List.of()
-                : fileService.resolveImportedContextClassPaths(sessionRequest.projectRoot(), sessionRequest.cutPath());
+        List<String> importedContextPaths = fileService.resolveImportedContextClassPaths(
+                sessionRequest.projectRoot(),
+                sessionRequest.cutPath()
+        );
         List<String> cachedContextPaths = usedContextClassPathCache.read(cacheKeyPath);
         consoleLogger.announceCacheRead(cacheKeyPath, cachedContextPaths);
 
@@ -196,9 +195,6 @@ public final class JunitLlmSessionRunner {
     }
 
     private Path cacheKeyPath(JunitLlmSessionRequest sessionRequest) {
-        if (sessionRequest.operation() == JunitLlmOperation.FIX) {
-            return sessionRequest.outputPath().toAbsolutePath().normalize();
-        }
         return sessionRequest.cutPath().toAbsolutePath().normalize();
     }
 

@@ -10,7 +10,7 @@
     <packaging>jar</packaging>
 
     <name>JAIPilot CLI</name>
-    <description>Zero-config Java Maven CLI for JaCoCo coverage and PIT mutation testing, designed as a test safety harness for AI coding agents.</description>
+    <description>Zero-config Java Maven CLI for JaCoCo coverage verification and backend-assisted JUnit generation, designed as a test safety harness for AI coding agents.</description>
     <url>https://github.com/skrcode/jaipilot-cli</url>
 
     <licenses>

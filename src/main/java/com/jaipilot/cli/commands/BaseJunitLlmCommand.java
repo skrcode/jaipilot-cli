@@ -61,18 +61,10 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
     private long timeoutSeconds;
 
     @Option(
-            names = "--max-fix-attempts",
-            defaultValue = "5",
-            paramLabel = "<count>",
-            description = "Maximum automatic backend fix attempts after local build failures. Default: ${DEFAULT-VALUE}."
-    )
-    private int maxFixAttempts;
-
-    @Option(
             names = "--coverage-threshold",
             defaultValue = "80.0",
             paramLabel = "<percent>",
-            description = "Required minimum JaCoCo line coverage for the class under test during generate/fix. Default: ${DEFAULT-VALUE}."
+            description = "Required minimum JaCoCo line coverage for the class under test during generate. Default: ${DEFAULT-VALUE}."
     )
     private double coverageThreshold;
 
@@ -130,7 +122,9 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
                     new MavenCommandBuilder(),
                     new GradleCommandBuilder(),
                     new ProcessExecutor(),
-                    fileService
+                    fileService,
+                    true,
+                    out
             );
             JunitLlmSessionResult result = workflowRunner.run(new JunitLlmSessionRequest(
                     normalizedProjectRoot,
@@ -145,7 +139,6 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
                     buildExecutable,
                     List.copyOf(additionalBuildArgs),
                     Duration.ofSeconds(timeoutSeconds),
-                    maxFixAttempts,
                     coverageThreshold
             );
 
@@ -179,12 +172,6 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             throw new CommandLine.ParameterException(
                     spec.commandLine(),
                     "--timeout-seconds must be greater than zero."
-            );
-        }
-        if (maxFixAttempts < 0) {
-            throw new CommandLine.ParameterException(
-                    spec.commandLine(),
-                    "--max-fix-attempts must be zero or greater."
             );
         }
         if (Double.isNaN(coverageThreshold) || coverageThreshold < 0.0d || coverageThreshold > 100.0d) {

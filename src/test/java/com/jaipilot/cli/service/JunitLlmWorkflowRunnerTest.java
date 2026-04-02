@@ -1,5 +1,9 @@
 package com.jaipilot.cli.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.jaipilot.cli.backend.JunitLlmBackendClient;
 import com.jaipilot.cli.files.ProjectFileService;
 import com.jaipilot.cli.model.FetchJobResponse;
@@ -20,9 +24,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JunitLlmWorkflowRunnerTest {
 
@@ -30,7 +31,7 @@ class JunitLlmWorkflowRunnerTest {
     Path tempDir;
 
     @Test
-    void runBuildsExecutesAndFixesUntilTargetTestPasses() throws Exception {
+    void runSucceedsWhenGeneratedTestPassesValidation() throws Exception {
         Path projectRoot = tempDir.resolve("project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
@@ -45,7 +46,15 @@ class JunitLlmWorkflowRunnerTest {
         Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
         Path fakeMaven = writeFakeMaven(projectRoot);
 
-        StubBackendClient backendClient = new StubBackendClient();
+        StubBackendClient backendClient = new StubBackendClient(
+                """
+                package com.example;
+
+                class CrashControllerTest {
+                    // PASS
+                }
+                """
+        );
         ProjectFileService fileService = new ProjectFileService();
         JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
                 backendClient,
@@ -61,166 +70,35 @@ class JunitLlmWorkflowRunnerTest {
                 fileService
         );
 
-        JunitLlmSessionResult result = workflowRunner.run(new JunitLlmSessionRequest(
-                projectRoot,
-                cutPath,
-                outputPath,
-                JunitLlmOperation.GENERATE,
-                null,
-                "",
-                "",
-                null
-        ), fakeMaven, List.of("-Drepo.password=hunter2"), Duration.ofSeconds(10), 5, 0.0d);
+        JunitLlmSessionResult result = workflowRunner.run(
+                new JunitLlmSessionRequest(
+                        projectRoot,
+                        cutPath,
+                        outputPath,
+                        JunitLlmOperation.GENERATE,
+                        null,
+                        "",
+                        "",
+                        null
+                ),
+                fakeMaven,
+                List.of(),
+                Duration.ofSeconds(10),
+                0.0d
+        );
 
         assertEquals("session-1", result.sessionId());
         assertTrue(Files.readString(outputPath).contains("PASS"));
-        assertEquals(3, backendClient.requests.size());
-        InvokeJunitLlmRequest firstFixRequest = backendClient.requests.get(1);
-        InvokeJunitLlmRequest secondFixRequest = backendClient.requests.get(2);
-        assertEquals("generate", backendClient.requests.get(0).type());
-        assertEquals("fix", firstFixRequest.type());
-        assertEquals("fix", secondFixRequest.type());
-        assertEquals("", firstFixRequest.cutName());
-        assertEquals("", firstFixRequest.cutCode());
-        assertTrue(firstFixRequest.clientLogs().contains("Phase: test-compile"));
-        assertTrue(firstFixRequest.initialTestClassCode().contains("BUILD_FAIL"));
-        assertEquals("", firstFixRequest.newTestClassCode());
-        assertTrue(firstFixRequest.clientLogs().contains("-Drepo.password=[REDACTED]"));
-        assertTrue(firstFixRequest.clientLogs().contains("Authorization: Bearer [REDACTED]"));
-        assertTrue(firstFixRequest.clientLogs().contains("refresh_token=[REDACTED]"));
-        assertTrue(firstFixRequest.clientLogs().contains("[stack trace trimmed:"));
-        assertFalse(firstFixRequest.clientLogs().contains("hunter2"));
-        assertFalse(firstFixRequest.clientLogs().contains("compile-secret-token"));
-        assertFalse(firstFixRequest.clientLogs().contains("jwt-compile-token"));
-        assertFalse(firstFixRequest.clientLogs().contains("com.example.Compiler.internal"));
-        assertEquals("", secondFixRequest.cutName());
-        assertEquals("", secondFixRequest.cutCode());
-        assertTrue(secondFixRequest.clientLogs().contains("Phase: test"));
-        assertTrue(secondFixRequest.initialTestClassCode().contains("TEST_FAIL"));
-        assertEquals("", secondFixRequest.newTestClassCode());
-        assertTrue(secondFixRequest.clientLogs().contains("Authorization: Bearer [REDACTED]"));
-        assertTrue(secondFixRequest.clientLogs().contains("refresh_token=[REDACTED]"));
-        assertTrue(secondFixRequest.clientLogs().contains("[stack trace trimmed:"));
-        assertFalse(secondFixRequest.clientLogs().contains("jwt-test-token"));
-        assertFalse(secondFixRequest.clientLogs().contains("org.junit.jupiter.engine.execution"));
-
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertEquals(6, commandLog.size());
+        assertEquals(3, commandLog.size());
         assertTrue(commandLog.get(0).contains("test-compile"));
         assertTrue(commandLog.get(1).contains("test-compile"));
-        assertTrue(commandLog.get(2).contains("test-compile"));
-        assertTrue(commandLog.get(3).contains("-Dtest=com.example.CrashControllerTest"));
-        assertTrue(commandLog.get(4).contains("test-compile"));
-        assertTrue(commandLog.get(5).contains("-Dtest=com.example.CrashControllerTest"));
+        assertTrue(commandLog.get(2).contains("-Dtest=com.example.CrashControllerTest"));
     }
 
     @Test
-    void runBuildsUsesGradleForGradleProjects() throws Exception {
-        Path projectRoot = tempDir.resolve("gradle-project");
-        write(projectRoot.resolve("build.gradle.kts"), "plugins { java }");
-        Path cutPath = write(
-                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
-                """
-                package com.example;
-
-                public class CrashController {
-                }
-                """
-        );
-        Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
-        Path fakeGradle = writeFakeGradle(projectRoot);
-
-        StubBackendClient backendClient = new StubBackendClient();
-        ProjectFileService fileService = new ProjectFileService();
-        JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
-                backendClient,
-                fileService,
-                new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json")),
-                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter()))
-        );
-        JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
-                sessionRunner,
-                new MavenCommandBuilder(),
-                new GradleCommandBuilder(),
-                new ProcessExecutor(),
-                fileService
-        );
-
-        JunitLlmSessionResult result = workflowRunner.run(new JunitLlmSessionRequest(
-                projectRoot,
-                cutPath,
-                outputPath,
-                JunitLlmOperation.GENERATE,
-                null,
-                "",
-                "",
-                null
-        ), fakeGradle, List.of("-PrepoPassword=hunter2"), Duration.ofSeconds(10), 5, 0.0d);
-
-        assertEquals("session-1", result.sessionId());
-        assertTrue(Files.readString(outputPath).contains("PASS"));
-        List<String> commandLog = Files.readAllLines(projectRoot.resolve("gradle-commands.log"));
-        assertEquals(6, commandLog.size());
-        assertTrue(commandLog.get(0).contains("testClasses"));
-        assertTrue(commandLog.get(3).contains("test --tests com.example.CrashControllerTest"));
-        assertTrue(commandLog.get(5).contains("test --tests com.example.CrashControllerTest"));
-    }
-
-    @Test
-    void runBuildsScopesGradleCommandsToOwningModule() throws Exception {
-        Path projectRoot = tempDir.resolve("gradle-multiproject");
-        write(projectRoot.resolve("settings.gradle.kts"), "rootProject.name = \"workspace\"");
-        write(projectRoot.resolve("build.gradle.kts"), "plugins { java }");
-        Path cutPath = write(
-                projectRoot.resolve("clients/src/main/java/com/example/CrashController.java"),
-                """
-                package com.example;
-
-                public class CrashController {
-                }
-                """
-        );
-        Path outputPath = projectRoot.resolve("clients/src/test/java/com/example/CrashControllerTest.java");
-        Path fakeGradle = writeFakeGradle(projectRoot);
-
-        StubBackendClient backendClient = new StubBackendClient();
-        ProjectFileService fileService = new ProjectFileService();
-        JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
-                backendClient,
-                fileService,
-                new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json")),
-                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter()))
-        );
-        JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
-                sessionRunner,
-                new MavenCommandBuilder(),
-                new GradleCommandBuilder(),
-                new ProcessExecutor(),
-                fileService
-        );
-
-        JunitLlmSessionResult result = workflowRunner.run(new JunitLlmSessionRequest(
-                projectRoot,
-                cutPath,
-                outputPath,
-                JunitLlmOperation.GENERATE,
-                null,
-                "",
-                "",
-                null
-        ), fakeGradle, List.of(), Duration.ofSeconds(10), 5, 0.0d);
-
-        assertEquals("session-1", result.sessionId());
-        List<String> commandLog = Files.readAllLines(projectRoot.resolve("gradle-commands.log"));
-        assertEquals(3, commandLog.size());
-        assertTrue(commandLog.get(0).contains(":clients:testClasses"));
-        assertTrue(commandLog.get(1).contains(":clients:testClasses"));
-        assertTrue(commandLog.get(2).contains(":clients:test --tests com.example.CrashControllerTest"));
-    }
-
-    @Test
-    void runAllowsExistingTargetTestCompileFailureDuringPreflight() throws Exception {
-        Path projectRoot = tempDir.resolve("preflight-project");
+    void runFailsWhenGeneratedTestDoesNotCompile() throws Exception {
+        Path projectRoot = tempDir.resolve("compile-fail-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
                 projectRoot.resolve("src/main/java/com/example/CrashController.java"),
@@ -231,8 +109,10 @@ class JunitLlmWorkflowRunnerTest {
                 }
                 """
         );
-        Path outputPath = write(
-                projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java"),
+        Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
+        Path fakeMaven = writeFakeMaven(projectRoot);
+
+        StubBackendClient backendClient = new StubBackendClient(
                 """
                 package com.example;
 
@@ -241,9 +121,6 @@ class JunitLlmWorkflowRunnerTest {
                 }
                 """
         );
-        Path fakeMaven = writeFakeMaven(projectRoot);
-
-        StubBackendClient backendClient = new StubBackendClient();
         ProjectFileService fileService = new ProjectFileService();
         JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
                 backendClient,
@@ -259,65 +136,7 @@ class JunitLlmWorkflowRunnerTest {
                 fileService
         );
 
-        JunitLlmSessionResult result = workflowRunner.run(new JunitLlmSessionRequest(
-                projectRoot,
-                cutPath,
-                outputPath,
-                JunitLlmOperation.GENERATE,
-                null,
-                Files.readString(outputPath),
-                "",
-                null
-        ), fakeMaven, List.of(), Duration.ofSeconds(10), 5, 0.0d);
-
-        assertEquals("session-1", result.sessionId());
-        assertTrue(Files.readString(outputPath).contains("PASS"));
-        assertEquals(3, backendClient.requests.size());
-    }
-
-    @Test
-    void runStopsBeforeBackendWhenProjectHasUnrelatedCompileFailure() throws Exception {
-        Path projectRoot = tempDir.resolve("broken-project");
-        write(projectRoot.resolve("pom.xml"), "<project/>");
-        Path cutPath = write(
-                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
-                """
-                package com.example;
-
-                public class CrashController {
-                }
-                """
-        );
-        write(
-                projectRoot.resolve("src/main/java/com/example/BrokenDependency.java"),
-                """
-                package com.example;
-
-                class BrokenDependency {
-                    // UNRELATED_BUILD_FAIL
-                }
-                """
-        );
-        Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
-        Path fakeMaven = writeFakeMaven(projectRoot);
-
-        StubBackendClient backendClient = new StubBackendClient();
-        ProjectFileService fileService = new ProjectFileService();
-        JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
-                backendClient,
-                fileService,
-                new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json")),
-                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter()))
-        );
-        JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
-                sessionRunner,
-                new MavenCommandBuilder(),
-                new GradleCommandBuilder(),
-                new ProcessExecutor(),
-                fileService
-        );
-
-        IllegalStateException exception = org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalStateException exception = assertThrows(
                 IllegalStateException.class,
                 () -> workflowRunner.run(
                         new JunitLlmSessionRequest(
@@ -333,18 +152,17 @@ class JunitLlmWorkflowRunnerTest {
                         fakeMaven,
                         List.of(),
                         Duration.ofSeconds(10),
-                        5,
                         0.0d
                 )
         );
 
-        assertTrue(exception.getMessage().contains("Local build failed before JAIPilot started"));
-        assertEquals(0, backendClient.requests.size());
+        assertTrue(exception.getMessage().contains("Failed phase: test-compile"));
+        assertEquals(1, backendClient.requests.size());
     }
 
     @Test
-    void runKeepsFixingUntilCoverageThresholdIsMet() throws Exception {
-        Path projectRoot = tempDir.resolve("coverage-project");
+    void runStreamsBuildLogsWhenEnabled() throws Exception {
+        Path projectRoot = tempDir.resolve("project-with-logs");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
                 projectRoot.resolve("src/main/java/com/example/CrashController.java"),
@@ -352,12 +170,6 @@ class JunitLlmWorkflowRunnerTest {
                 package com.example;
 
                 public class CrashController {
-                    int adjust(int value) {
-                        if (value > 10) {
-                            return value - 1;
-                        }
-                        return value + 1;
-                    }
                 }
                 """
         );
@@ -369,21 +181,114 @@ class JunitLlmWorkflowRunnerTest {
                 package com.example;
 
                 class CrashControllerTest {
-                    void generated() {
-                        // LOW_COVERAGE
-                    }
-                }
-                """,
-                """
-                package com.example;
-
-                class CrashControllerTest {
-                    void generated() {
-                        // HIGH_COVERAGE
-                    }
+                    // PASS
                 }
                 """
         );
+        ProjectFileService fileService = new ProjectFileService();
+        JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
+                backendClient,
+                fileService,
+                new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json")),
+                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter()))
+        );
+        StringWriter buildLogBuffer = new StringWriter();
+        JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
+                sessionRunner,
+                new MavenCommandBuilder(),
+                new GradleCommandBuilder(),
+                new ProcessExecutor(),
+                fileService,
+                true,
+                new PrintWriter(buildLogBuffer, true)
+        );
+
+        workflowRunner.run(
+                new JunitLlmSessionRequest(
+                        projectRoot,
+                        cutPath,
+                        outputPath,
+                        JunitLlmOperation.GENERATE,
+                        null,
+                        "",
+                        "",
+                        null
+                ),
+                fakeMaven,
+                List.of(),
+                Duration.ofSeconds(10),
+                0.0d
+        );
+
+        String buildLogs = buildLogBuffer.toString();
+        assertTrue(buildLogs.contains("compile ok"));
+        assertTrue(buildLogs.contains("Tests run: 1, Failures: 0"));
+    }
+
+    @Test
+    void runRetriesAfterAutoDownloadingDependencySourcesForMissingContextPath() throws Exception {
+        Path projectRoot = tempDir.resolve("project-with-missing-context");
+        write(projectRoot.resolve("pom.xml"), "<project/>");
+        Path cutPath = write(
+                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
+        Path fakeMaven = writeFakeMavenThatDownloadsDependencySources(projectRoot);
+
+        JunitLlmBackendClient backendClient = new JunitLlmBackendClient() {
+            private int invokeCount;
+
+            @Override
+            public InvokeJunitLlmResponse invoke(InvokeJunitLlmRequest request) {
+                invokeCount++;
+                return new InvokeJunitLlmResponse("job-" + invokeCount, "session-1");
+            }
+
+            @Override
+            public FetchJobResponse fetchJob(String jobId) {
+                if ("job-1".equals(jobId)) {
+                    return new FetchJobResponse(
+                            "done",
+                            new FetchJobResponse.FetchJobOutput(
+                                    "session-1",
+                                    """
+                                    package com.example;
+
+                                    class CrashControllerTest {
+                                    }
+                                    """,
+                                    List.of("org/apache/kafka/common/utils/Utils.java"),
+                                    List.of()
+                            ),
+                            null,
+                            null
+                    );
+                }
+                return new FetchJobResponse(
+                        "done",
+                        new FetchJobResponse.FetchJobOutput(
+                                "session-1",
+                                """
+                                package com.example;
+
+                                class CrashControllerTest {
+                                }
+                                """,
+                                List.of(),
+                                List.of()
+                        ),
+                        null,
+                        null
+                );
+            }
+        };
+
         ProjectFileService fileService = new ProjectFileService();
         JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
                 backendClient,
@@ -399,25 +304,27 @@ class JunitLlmWorkflowRunnerTest {
                 fileService
         );
 
-        JunitLlmSessionResult result = workflowRunner.run(new JunitLlmSessionRequest(
-                projectRoot,
-                cutPath,
-                outputPath,
-                JunitLlmOperation.GENERATE,
-                null,
-                "",
-                "",
-                null
-        ), fakeMaven, List.of(), Duration.ofSeconds(10), 5, 80.0d);
+        JunitLlmSessionResult result = workflowRunner.run(
+                new JunitLlmSessionRequest(
+                        projectRoot,
+                        cutPath,
+                        outputPath,
+                        JunitLlmOperation.GENERATE,
+                        null,
+                        "",
+                        "",
+                        null
+                ),
+                fakeMaven,
+                List.of(),
+                Duration.ofSeconds(10),
+                0.0d
+        );
 
         assertEquals("session-1", result.sessionId());
-        assertEquals(2, backendClient.requests.size());
-        assertEquals("generate", backendClient.requests.get(0).type());
-        assertEquals("fix", backendClient.requests.get(1).type());
-        assertTrue(backendClient.requests.get(1).clientLogs().contains("Phase: coverage"));
-        assertTrue(backendClient.requests.get(1).clientLogs().contains("Coverage threshold: 80.00%"));
-        assertTrue(backendClient.requests.get(1).clientLogs().contains("Actual CUT line coverage: 50.00%"));
-        assertTrue(Files.readString(outputPath).contains("class CrashControllerTest {"));
+        List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
+        assertTrue(commandLog.stream().anyMatch(line -> line.contains("dependency:sources")));
+        assertTrue(Files.isRegularFile(projectRoot.resolve("src/main/java/org/apache/kafka/common/utils/Utils.java")));
     }
 
     private Path write(Path path, String content) throws Exception {
@@ -442,90 +349,16 @@ class JunitLlmWorkflowRunnerTest {
                       echo "compile failed: unrelated dependency"
                       exit 1
                     fi
-                    if grep -q BUILD_FAIL "$TEST_FILE"; then
+                    if grep -q BUILD_FAIL "$TEST_FILE" 2>/dev/null; then
                       echo "compile failed: missing symbol"
-                      echo "Authorization: Bearer compile-secret-token"
-                      echo "refresh_token=refresh-compile-token"
-                      echo "JAIPILOT_JWT_TOKEN=jwt-compile-token"
-                      echo "java.lang.IllegalStateException: compiler blew up"
-                      echo "    at com.example.Compiler.internal(Compiler.java:41)"
-                      echo "    at org.apache.maven.plugin.TestCompileMojo.execute(TestCompileMojo.java:99)"
-                      echo "    ... 18 more"
                       exit 1
                     fi
                     echo "compile ok"
                     exit 0
                     ;;
-                  *jacoco-maven-plugin*prepare-agent*test*jacoco-maven-plugin*report*)
-                    mkdir -p "$PWD/target/site/jacoco"
-                    if grep -q LOW_COVERAGE "$TEST_FILE"; then
-                      cat > "$PWD/target/site/jacoco/jacoco.xml" <<'EOF'
-                <report name="JAIPilot">
-                  <package name="com/example">
-                    <class name="com/example/CrashController" sourcefilename="CrashController.java">
-                      <method name="adjust" desc="(I)I" line="4">
-                        <counter type="LINE" missed="1" covered="1"/>
-                        <counter type="BRANCH" missed="1" covered="1"/>
-                        <counter type="INSTRUCTION" missed="1" covered="1"/>
-                      </method>
-                      <counter type="LINE" missed="1" covered="1"/>
-                      <counter type="BRANCH" missed="1" covered="1"/>
-                      <counter type="INSTRUCTION" missed="1" covered="1"/>
-                    </class>
-                    <sourcefile name="CrashController.java">
-                      <line nr="4" mi="0" ci="1" mb="0" cb="0"/>
-                      <line nr="5" mi="1" ci="0" mb="1" cb="0"/>
-                      <counter type="LINE" missed="1" covered="1"/>
-                      <counter type="BRANCH" missed="1" covered="1"/>
-                      <counter type="INSTRUCTION" missed="1" covered="1"/>
-                    </sourcefile>
-                  </package>
-                  <counter type="LINE" missed="1" covered="1"/>
-                  <counter type="BRANCH" missed="1" covered="1"/>
-                  <counter type="INSTRUCTION" missed="1" covered="1"/>
-                </report>
-                EOF
-                    else
-                      cat > "$PWD/target/site/jacoco/jacoco.xml" <<'EOF'
-                <report name="JAIPilot">
-                  <package name="com/example">
-                    <class name="com/example/CrashController" sourcefilename="CrashController.java">
-                      <method name="adjust" desc="(I)I" line="4">
-                        <counter type="LINE" missed="0" covered="2"/>
-                        <counter type="BRANCH" missed="0" covered="2"/>
-                        <counter type="INSTRUCTION" missed="0" covered="2"/>
-                      </method>
-                      <counter type="LINE" missed="0" covered="2"/>
-                      <counter type="BRANCH" missed="0" covered="2"/>
-                      <counter type="INSTRUCTION" missed="0" covered="2"/>
-                    </class>
-                    <sourcefile name="CrashController.java">
-                      <line nr="4" mi="0" ci="1" mb="0" cb="0"/>
-                      <line nr="5" mi="0" ci="1" mb="0" cb="1"/>
-                      <counter type="LINE" missed="0" covered="2"/>
-                      <counter type="BRANCH" missed="0" covered="2"/>
-                      <counter type="INSTRUCTION" missed="0" covered="2"/>
-                    </sourcefile>
-                  </package>
-                  <counter type="LINE" missed="0" covered="2"/>
-                  <counter type="BRANCH" missed="0" covered="2"/>
-                  <counter type="INSTRUCTION" missed="0" covered="2"/>
-                </report>
-                EOF
-                    fi
-                    echo "coverage ok"
-                    exit 0
-                    ;;
                   *-Dtest=com.example.CrashControllerTest*test)
-                    if grep -q TEST_FAIL "$TEST_FILE"; then
+                    if grep -q TEST_FAIL "$TEST_FILE" 2>/dev/null; then
                       echo "Tests run: 1, Failures: 1"
-                      echo "Authorization: Bearer test-secret-token"
-                      echo "refresh_token=refresh-test-token"
-                      echo "JAIPILOT_JWT_TOKEN=jwt-test-token"
-                      echo "org.opentest4j.AssertionFailedError: expected: <200> but was: <500>"
-                      echo "    at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)"
-                      echo "    at com.example.CrashControllerTest.shouldReturnOk(CrashControllerTest.java:42)"
-                      echo "    ... 12 more"
                       exit 1
                     fi
                     echo "Tests run: 1, Failures: 0"
@@ -542,44 +375,32 @@ class JunitLlmWorkflowRunnerTest {
         return fakeMaven;
     }
 
-    private Path writeFakeGradle(Path projectRoot) throws Exception {
-        Path fakeGradle = projectRoot.resolve("gradlew");
+    private Path writeFakeMavenThatDownloadsDependencySources(Path projectRoot) throws Exception {
+        Path fakeMaven = projectRoot.resolve("mvnw");
         Files.createDirectories(projectRoot);
-        Files.writeString(fakeGradle, """
+        Files.writeString(fakeMaven, """
                 #!/usr/bin/env sh
                 set -eu
 
-                TEST_FILE="$PWD/src/test/java/com/example/CrashControllerTest.java"
-                printf '%s\\n' "$*" >> "$PWD/gradle-commands.log"
+                printf '%s\\n' "$*" >> "$PWD/maven-commands.log"
 
                 case "$*" in
-                  *testClasses*)
-                    if grep -q BUILD_FAIL "$TEST_FILE"; then
-                      echo "compile failed: missing symbol"
-                      echo "Authorization: Bearer compile-secret-token"
-                      echo "refresh_token=refresh-compile-token"
-                      echo "JAIPILOT_JWT_TOKEN=jwt-compile-token"
-                      echo "java.lang.IllegalStateException: gradle compile blew up"
-                      echo "    at com.example.Compiler.internal(Compiler.java:41)"
-                      echo "    at org.gradle.api.internal.tasks.compile.NormalizingJavaCompiler.execute(NormalizingJavaCompiler.java:88)"
-                      echo "    ... 18 more"
-                      exit 1
-                    fi
+                  *dependency:sources*)
+                    mkdir -p "$PWD/src/main/java/org/apache/kafka/common/utils"
+                    cat > "$PWD/src/main/java/org/apache/kafka/common/utils/Utils.java" <<'EOF'
+                package org.apache.kafka.common.utils;
+
+                public class Utils {
+                }
+                EOF
+                    echo "downloaded sources"
+                    exit 0
+                    ;;
+                  *test-compile*)
                     echo "compile ok"
                     exit 0
                     ;;
-                  *test*--tests*com.example.CrashControllerTest*)
-                    if grep -q TEST_FAIL "$TEST_FILE"; then
-                      echo "Tests run: 1, Failures: 1"
-                      echo "Authorization: Bearer test-secret-token"
-                      echo "refresh_token=refresh-test-token"
-                      echo "JAIPILOT_JWT_TOKEN=jwt-test-token"
-                      echo "org.opentest4j.AssertionFailedError: expected: <200> but was: <500>"
-                      echo "    at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)"
-                      echo "    at com.example.CrashControllerTest.shouldReturnOk(CrashControllerTest.java:42)"
-                      echo "    ... 12 more"
-                      exit 1
-                    fi
+                  *-Dtest=com.example.CrashControllerTest*test)
                     echo "Tests run: 1, Failures: 0"
                     exit 0
                     ;;
@@ -589,9 +410,9 @@ class JunitLlmWorkflowRunnerTest {
                     ;;
                 esac
                 """);
-        boolean executable = fakeGradle.toFile().setExecutable(true);
-        assertTrue(executable, "fake Gradle script must be executable");
-        return fakeGradle;
+        boolean executable = fakeMaven.toFile().setExecutable(true);
+        assertTrue(executable, "fake Maven script must be executable");
+        return fakeMaven;
     }
 
     private static final class StubBackendClient implements JunitLlmBackendClient {
@@ -611,39 +432,10 @@ class JunitLlmWorkflowRunnerTest {
 
         @Override
         public FetchJobResponse fetchJob(String jobId) {
-            if (!finalTestFiles.isEmpty()) {
-                int index = Integer.parseInt(jobId.substring("job-".length())) - 1;
-                if (index >= 0 && index < finalTestFiles.size()) {
-                    return doneResponse(finalTestFiles.get(index));
-                }
-            }
-            return switch (jobId) {
-                case "job-1" -> doneResponse("""
-                        package com.example;
-
-                        class CrashControllerTest {
-                            // BUILD_FAIL
-                        }
-                        """);
-                case "job-2" -> doneResponse("""
-                        package com.example;
-
-                        class CrashControllerTest {
-                            // TEST_FAIL
-                        }
-                        """);
-                case "job-3" -> doneResponse("""
-                        package com.example;
-
-                        class CrashControllerTest {
-                            // PASS
-                        }
-                        """);
-                default -> throw new IllegalStateException("Unexpected job id " + jobId);
-            };
-        }
-
-        private FetchJobResponse doneResponse(String finalTestFile) {
+            int index = Integer.parseInt(jobId.substring("job-".length())) - 1;
+            String finalTestFile = finalTestFiles.isEmpty()
+                    ? "package com.example;\nclass CrashControllerTest {}\n"
+                    : finalTestFiles.get(Math.max(0, Math.min(index, finalTestFiles.size() - 1)));
             return new FetchJobResponse(
                     "done",
                     new FetchJobResponse.FetchJobOutput(

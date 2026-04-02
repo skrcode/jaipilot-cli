@@ -24,23 +24,23 @@
 </div>
 
 <p align="center">
-  JAIPilot is a Java CLI for backend-assisted JUnit generation and zero-config verification. It can call the JUnit LLM backend to generate or fix tests, then run JaCoCo and PIT checks to validate the result.
+  JAIPilot is a Java CLI for backend-assisted JUnit generation and zero-config verification. It can call the JUnit LLM backend to generate tests, then run JaCoCo checks to validate the result.
 </p>
 
 <hr />
 
 With high-coverage, robust unit tests, you can let coding agents such as Claude Code, Codex, and Cursor work on your codebase with a much tighter feedback loop. Existing tests validate new changes quickly, and weak spots become visible immediately.
 
-If your repository already has high line, branch, and mutation coverage, agents can use that test suite as a guardrail. New code can then be held to the same standard.
+If your repository already has high line and branch coverage, agents can use that test suite as a guardrail. New code can then be held to the same standard.
 
-It is designed to work alongside Claude Code, Cursor, Codex, and similar tools. Agents can change code, run `jaipilot verify`, inspect weak coverage and surviving mutations, add or improve tests, and repeat until the project is well protected.
+It is designed to work alongside Claude Code, Cursor, Codex, and similar tools. Agents can change code, run `jaipilot verify`, inspect weak coverage, add or improve tests, and repeat until the project is well protected.
 
 ## Why JAIPilot
 
-- Backend-assisted JUnit test generation and fix flows
+- Backend-assisted JUnit test generation
 - Java verification for Maven and Gradle projects
 - A test safety harness for AI-assisted coding and refactoring
-- Actionable output with exact coverage gaps and mutation failures
+- Actionable output with exact coverage gaps
 - No changes required in Maven target project `pom.xml`
 - Uses a temporary mirrored workspace for Maven verification instead of editing your repo
 
@@ -112,21 +112,13 @@ jaipilot login
 jaipilot generate src/main/java/org/example/CrashController.java
 ```
 
-Fix an existing failing test with build logs:
-
-```sh
-jaipilot fix \
-  src/test/java/org/example/CrashControllerTest.java
-```
-
 Run with explicit thresholds:
 
 ```sh
 jaipilot verify \
   --line-coverage-threshold 85 \
   --branch-coverage-threshold 75 \
-  --instruction-coverage-threshold 85 \
-  --mutation-threshold 80
+  --instruction-coverage-threshold 85
 ```
 
 Use a specific build executable:
@@ -139,25 +131,25 @@ jaipilot verify --build-executable /path/to/mvn
 
 1. Run `jaipilot verify` once on the existing codebase to establish the current safety baseline.
 2. Have your coding agent make changes and rerun `jaipilot verify`.
-3. Let the agent inspect coverage gaps and surviving mutations, then add or improve tests.
+3. Let the agent inspect coverage gaps, then add or improve tests.
 4. Repeat until the project passes at your target threshold.
 
-For many teams, that means starting above 80% for the existing codebase and pushing newly written code toward 100% line, branch, and mutation coverage.
+For many teams, that means starting above 80% for the existing codebase and pushing newly written code toward 100% line and branch coverage.
 
 ## Use With Coding Agents
 
-JAIPilot works best as a tight generation-and-verification loop around an agent. Ask Claude Code, Cursor, Codex, or another coding agent to generate or fix tests with JAIPilot, then keep running `jaipilot verify` until the project passes with coverage as high as possible.
+JAIPilot works best as a tight generation-and-verification loop around an agent. Ask Claude Code, Cursor, Codex, or another coding agent to generate tests with JAIPilot, then keep running `jaipilot verify` until the project passes with coverage as high as possible.
 
 Example prompt:
 
 ```text
-Use `jaipilot generate` or `jaipilot fix` to update tests, then keep running `jaipilot verify` until you reach 80% (or 100%).
+Use `jaipilot generate` to update tests, then keep running `jaipilot verify` until you reach 80% (or 100%).
 ```
 
 <details>
 <summary><strong>Why this works well with agents</strong></summary>
 
-JAIPilot gives coding agents a concrete feedback loop. Instead of guessing whether a change is safe, the agent can rerun verification, inspect coverage gaps and surviving mutations, improve tests, and iterate until the project is protected.
+JAIPilot gives coding agents a concrete feedback loop. Instead of guessing whether a change is safe, the agent can rerun verification, inspect coverage gaps, improve tests, and iterate until the project is protected.
 
 </details>
 
@@ -166,7 +158,6 @@ JAIPilot gives coding agents a concrete feedback loop. Instead of guessing wheth
 - Progress updates while the command runs
 - A final `PASS` or `FAIL`
 - Exact coverage gaps from JaCoCo
-- Exact surviving mutations from PIT
 - Concrete next actions
 
 ## JUnit LLM Commands
@@ -177,30 +168,28 @@ Sign in once before using the backend-assisted flows:
 jaipilot login
 ```
 
-`jaipilot generate` reads the class under test, infers the output test path and backend metadata, uses any existing test file at that path as the baseline `initialTestClassCode`, submits the request to `invoke-junit-llm-cli`, polls `fetch-job-cli`, follows any requested `requiredContextClassPaths`, writes the returned `finalTestFile`, then runs a local build validation (`test-compile` / targeted `test` for Maven, `testClasses` / targeted `test --tests` for Gradle). Before it starts, JAIPilot also checks that the rest of the project still compiles without the target test file, so unrelated compile failures stop the workflow immediately instead of burning fix attempts. After the targeted test passes, JAIPilot collects JaCoCo coverage for the class under test and keeps iterating through the backend `fix` flow until the configured coverage threshold is met or `--max-fix-attempts` is exhausted.
-
-`jaipilot fix` does the same, but it starts from the current test class as `initialTestClassCode`, sends an empty CUT payload to the backend fix flow, and automatically captures the first failing local build or coverage feedback before calling the backend.
+`jaipilot generate` reads the class under test, infers the output test path and backend metadata, uses any existing test file at that path as the baseline `initialTestClassCode`, submits the request to `invoke-junit-llm-cli`, polls `fetch-job-cli`, follows any requested `requiredContextClassPaths`, writes the returned `finalTestFile`, then runs a local build validation (`test-compile` / targeted `test` for Maven, `testClasses` / targeted `test --tests` for Gradle). Before it starts, JAIPilot also checks that the rest of the project still compiles without the target test file, so unrelated compile failures stop the workflow immediately. After the targeted test passes, JAIPilot collects JaCoCo coverage for the class under test.
 
 Authentication commands:
 
 - `jaipilot login` starts the browser flow and stores credentials in `~/.config/jaipilot/credentials.json` with owner-only filesystem permissions when the OS supports them.
 - `jaipilot status` shows the current signed-in user and refreshes the access token if needed.
 - `jaipilot logout` clears the stored session.
-- `jaipilot doctor` checks the bundled runtime, trust configuration, proxy mode, and connectivity to `jaipilot.com` plus the backend.
+- `jaipilot doctor` checks the bundled runtime, TLS/proxy mode, and connectivity to `jaipilot.com` plus the backend.
 
 Common options:
 
 - `JAIPILOT_JWT_TOKEN` can be used instead of a stored login session.
 - `--output` overrides the inferred test file path when needed.
-- `--build-executable`, `--build-arg`, `--timeout-seconds`, `--coverage-threshold`, and `--max-fix-attempts` control the local compile-test-coverage loop after generation.
+- `--build-executable`, `--build-arg`, `--timeout-seconds`, and `--coverage-threshold` control the local compile-test-coverage loop after generation.
 
 ## How It Works
 
-For `generate` and `fix`, JAIPilot reads the local source files, calls the Supabase edge function, polls the async job endpoint, optionally resubmits requested context classes, uploads sanitized local build failure output when a fix pass is needed, and writes the returned test file into your project.
+For `generate`, JAIPilot reads the local source files, calls the Supabase edge function, polls the async job endpoint, optionally resubmits requested context classes, and writes the returned test file into your project.
 
-For `verify`, JAIPilot keeps the existing zero-config mirrored-workspace flow for Maven projects. For Gradle projects, it runs the standard `test`, `jacocoTestReport`, and `pitest` tasks from the project root, parses the generated reports, and prints a simplified summary for humans and agents.
+For `verify`, JAIPilot keeps the existing zero-config mirrored-workspace flow for Maven projects. For Gradle projects, it runs the standard `test` and `jacocoTestReport` tasks from the project root, parses the generated reports, and prints a simplified summary for humans and agents.
 
-Maven projects do not need JaCoCo or PIT configured in their own `pom.xml`. Gradle verification expects standard `jacocoTestReport` and `pitest` tasks to be available.
+Maven projects do not need JaCoCo configured in their own `pom.xml`. Gradle verification expects a standard `jacocoTestReport` task to be available.
 
 ## Requirements
 
@@ -208,14 +197,14 @@ Maven projects do not need JaCoCo or PIT configured in their own `pom.xml`. Grad
 - A Maven or Gradle project
 - JUnit 4 or JUnit 5 tests
 - Maven available via `./mvnw` or `mvn`, or Gradle available via `./gradlew` or `gradle`
-- A JAIPilot login session or a valid `JAIPILOT_JWT_TOKEN` for backend-assisted `generate` and `fix`
+- A JAIPilot login session or a valid `JAIPILOT_JWT_TOKEN` for backend-assisted `generate`
 
 ## Current Scope
 
 - Maven and Gradle build support
 - JUnit 4 and JUnit 5 only
 - The target repo is not modified
-- Maven verification uses a temporary mirrored workspace and reuses PIT history from `~/.jaipilot/pit-history` to speed up repeat runs
+- Maven verification uses a temporary mirrored workspace
 
 ## Development
 
@@ -241,23 +230,17 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.
 
 ## Enterprise SSL / Proxy
 
-JAIPilot ships with a bundled Java runtime, but some corporate networks still intercept TLS or require an explicit proxy. If you hit a certificate or PKIX-style error, run:
+JAIPilot ships with a bundled Java runtime, but some corporate networks still intercept TLS or require an explicit proxy. JAIPilot uses the runtime's default trust store only and does not provide trust-store override flags. If you hit a certificate or PKIX-style error, run:
 
 ```sh
 jaipilot doctor
 ```
 
-JAIPilot supports these network overrides:
+JAIPilot supports these proxy overrides:
 
-- `JAIPILOT_TRUST_STORE=/path/to/truststore.p12`
-- `JAIPILOT_TRUST_STORE_PASSWORD=changeit`
-- `JAIPILOT_TRUST_STORE_TYPE=PKCS12`
-- `JAIPILOT_USE_SYSTEM_CA=true`
 - `HTTPS_PROXY=http://proxy.example.com:8080`
 - `HTTP_PROXY=http://proxy.example.com:8080`
 - `NO_PROXY=127.0.0.1,localhost,.internal.example.com`
-
-On Windows and macOS, `JAIPILOT_USE_SYSTEM_CA=true` lets JAIPilot try the native OS root store when the bundled runtime supports it. For locked-down enterprise environments, the most reliable option is usually a dedicated trust store that contains your company root CA.
 
 ## License
 

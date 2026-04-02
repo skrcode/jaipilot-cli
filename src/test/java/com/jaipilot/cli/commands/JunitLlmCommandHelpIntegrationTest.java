@@ -22,38 +22,7 @@ class JunitLlmCommandHelpIntegrationTest {
         assertTrue(helpOutput.contains("--maven-executable"));
         assertTrue(helpOutput.contains("--gradle-executable"));
         assertTrue(helpOutput.contains("--timeout-seconds"));
-        assertTrue(helpOutput.contains("--max-fix-attempts"));
         assertTrue(helpOutput.contains("--coverage-threshold"));
-        assertFalse(helpOutput.contains("--attempt-number"));
-        assertFalse(helpOutput.contains("--backend-url"));
-        assertFalse(helpOutput.contains("--cached-context"));
-        assertFalse(helpOutput.contains("--client-logs"));
-        assertFalse(helpOutput.contains("--client-logs-file"));
-        assertFalse(helpOutput.contains("--context"));
-        assertFalse(helpOutput.contains("--cut-name"));
-        assertFalse(helpOutput.contains("--jwt-token"));
-        assertFalse(helpOutput.contains("--mockito-version"));
-        assertFalse(helpOutput.contains("--new-testclass-file"));
-        assertFalse(helpOutput.contains("--project-root"));
-        assertFalse(helpOutput.contains("--session-id"));
-        assertFalse(helpOutput.contains("--test-class-name"));
-        assertFalse(helpOutput.contains("--verbose"));
-    }
-
-    @Test
-    void fixHelpOnlyShowsInferredFriendlyOptions() {
-        String helpOutput = executeHelp("fix");
-
-        assertTrue(helpOutput.contains("--output"));
-        assertTrue(helpOutput.contains("--build-executable"));
-        assertTrue(helpOutput.contains("--build-arg"));
-        assertTrue(helpOutput.contains("--maven-executable"));
-        assertTrue(helpOutput.contains("--gradle-executable"));
-        assertTrue(helpOutput.contains("--timeout-seconds"));
-        assertTrue(helpOutput.contains("--max-fix-attempts"));
-        assertTrue(helpOutput.contains("--coverage-threshold"));
-        assertTrue(helpOutput.contains("<test>"));
-        assertFalse(helpOutput.contains("<cut>"));
         assertFalse(helpOutput.contains("--attempt-number"));
         assertFalse(helpOutput.contains("--backend-url"));
         assertFalse(helpOutput.contains("--cached-context"));
@@ -82,6 +51,7 @@ class JunitLlmCommandHelpIntegrationTest {
         assertEquals(0, exitCode);
         assertTrue(outBuffer.toString().contains("doctor"));
         assertTrue(outBuffer.toString().contains("update"));
+        assertFalse(outBuffer.toString().contains("fix"));
     }
 
     private String executeHelp(String command) {

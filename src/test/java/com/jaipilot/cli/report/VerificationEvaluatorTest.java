@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.jaipilot.cli.process.ExecutionResult;
 import com.jaipilot.cli.report.model.CoverageMetric;
 import com.jaipilot.cli.report.model.JacocoReport;
-import com.jaipilot.cli.report.model.PitReport;
 import com.jaipilot.cli.report.model.VerificationResult;
 import com.jaipilot.cli.report.model.VerificationThresholds;
 import java.io.IOException;
@@ -20,32 +19,28 @@ import org.junit.jupiter.api.io.TempDir;
 class VerificationEvaluatorTest {
 
     private final JacocoReportParser jacocoReportParser = new JacocoReportParser();
-    private final PitReportParser pitReportParser = new PitReportParser();
     private final VerificationEvaluator evaluator = new VerificationEvaluator();
 
     @TempDir
     Path tempDir;
 
     @Test
-    void flagsCoverageAndMutationFailuresWithDetailedFindings() throws IOException {
+    void flagsCoverageFailuresWithDetailedFindings() throws IOException {
         copyResource("jacoco.xml", tempDir.resolve("target/site/jacoco/jacoco.xml"));
-        copyResource("mutations.xml", tempDir.resolve("target/pit-reports/mutations.xml"));
 
         JacocoReport jacocoReport = jacocoReportParser.parse(tempDir, tempDir).orElseThrow();
-        PitReport pitReport = pitReportParser.parse(tempDir, tempDir).orElseThrow();
 
         VerificationResult result = evaluator.evaluate(
                 tempDir,
                 new ExecutionResult(List.of("mvn"), 0, false, ""),
                 java.util.Optional.of(jacocoReport),
-                java.util.Optional.of(pitReport),
-                new VerificationThresholds(85.0d, 70.0d, 80.0d, 70.0d),
+                new VerificationThresholds(85.0d, 70.0d, 80.0d),
                 2,
                 null
         );
 
         assertFalse(result.successful());
-        assertEquals(4, result.checks().size());
+        assertEquals(3, result.checks().size());
         assertTrue(result.buildIssues().isEmpty());
         assertTrue(result.coverageFindings().containsKey(CoverageMetric.LINE));
         assertEquals(2, result.coverageFindings().get(CoverageMetric.LINE).size());
@@ -53,59 +48,30 @@ class VerificationEvaluatorTest {
                 List.of(13, 14),
                 result.coverageFindings().get(CoverageMetric.LINE).get(0).uncoveredLines()
         );
-        assertEquals("NO_COVERAGE", result.mutationFindings().get(0).status());
-        assertTrue(result.mutationFindings().get(0).action().contains("executes the mutated line"));
     }
 
     @Test
-    void highlightsMissingPitJunit5PluginAsBuildIssue() {
+    void highlightsMissingGradleJacocoTaskAsBuildIssue() {
         VerificationResult result = evaluator.evaluate(
                 Path.of("/tmp/project"),
                 new ExecutionResult(
-                        List.of("mvn"),
+                        List.of("gradlew", "test", "jacocoTestReport"),
                         1,
                         false,
-                        "PIT >> WARNING : JUnit 5 is on the classpath but the pitest junit 5 plugin is not installed.\n"
-                                + "PIT >> SEVERE : Pitest could not run any tests.\n"
+                        "Task 'jacocoTestReport' not found in root project 'sample-project'.\n"
                 ),
                 java.util.Optional.empty(),
-                java.util.Optional.empty(),
-                new VerificationThresholds(80.0d, 70.0d, 80.0d, 70.0d),
+                new VerificationThresholds(80.0d, 70.0d, 80.0d),
                 3,
                 null
         );
 
         assertFalse(result.successful());
         assertEquals(
-                "PIT could not execute the project's JUnit 5 tests because the PIT JUnit 5 plugin is missing.",
+                "Gradle verification could not find a `jacocoTestReport` task.",
                 result.buildIssues().get(0).reason()
         );
-        assertTrue(result.buildIssues().get(0).action().contains("pitest-junit5-plugin"));
-    }
-
-    @Test
-    void highlightsMissingGradlePitestTaskAsBuildIssue() {
-        VerificationResult result = evaluator.evaluate(
-                Path.of("/tmp/project"),
-                new ExecutionResult(
-                        List.of("gradlew", "test", "jacocoTestReport", "pitest"),
-                        1,
-                        false,
-                        "Task 'pitest' not found in root project 'sample-project'.\n"
-                ),
-                java.util.Optional.empty(),
-                java.util.Optional.empty(),
-                new VerificationThresholds(80.0d, 70.0d, 80.0d, 70.0d),
-                3,
-                null
-        );
-
-        assertFalse(result.successful());
-        assertEquals(
-                "Gradle verification could not find a `pitest` task.",
-                result.buildIssues().get(0).reason()
-        );
-        assertTrue(result.buildIssues().get(0).action().contains("info.solidsoft.pitest"));
+        assertTrue(result.buildIssues().get(0).action().contains("jacoco"));
     }
 
     private void copyResource(String fileName, Path target) throws IOException {

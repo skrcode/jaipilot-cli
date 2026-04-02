@@ -37,7 +37,7 @@ class DoctorCommandTest {
 
         StringWriter outBuffer = new StringWriter();
         DoctorCommand command = new DoctorCommand(
-                new JaipilotHttpClientFactory(Map.of(), new Properties(), null, "Linux"),
+                new JaipilotHttpClientFactory(Map.of(), new Properties(), null),
                 baseUrl(websiteServer),
                 baseUrl(backendServer)
         );
@@ -63,7 +63,7 @@ class DoctorCommandTest {
                 exchange -> HttpsTestServer.writeText(exchange, "ok")
         ))) {
             DoctorCommand command = new DoctorCommand(
-                    new JaipilotHttpClientFactory(Map.of(), new Properties(), null, "Linux"),
+                    new JaipilotHttpClientFactory(Map.of(), new Properties(), null),
                     server.baseUrl(),
                     server.baseUrl()
             );
@@ -77,6 +77,7 @@ class DoctorCommandTest {
             assertEquals(CommandLine.ExitCode.SOFTWARE, exitCode);
             assertTrue(output.contains("trusted TLS connection"));
             assertTrue(output.contains("Remediation:"));
+            assertTrue(output.contains("default JVM/OS trust store"));
             assertFalse(output.contains("PKIX"));
         }
     }

@@ -32,7 +32,6 @@ class GradleCommandBuilderTest {
         assertTrue(command.contains("clean"));
         assertTrue(command.contains("test"));
         assertTrue(command.contains("jacocoTestReport"));
-        assertTrue(command.contains("pitest"));
     }
 
     @Test

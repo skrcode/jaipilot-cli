@@ -9,8 +9,7 @@ public record ReactorModule(
         Path originalModuleDir,
         Path relativeModuleDir,
         String packaging,
-        boolean javaModule,
-        TestFramework testFramework
+        boolean javaModule
 ) {
     public boolean rootModule() {
         return relativeModuleDir.toString().isBlank();

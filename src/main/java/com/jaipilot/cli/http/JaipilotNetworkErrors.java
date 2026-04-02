@@ -52,8 +52,8 @@ public final class JaipilotNetworkErrors {
             return "JAIPilot could not establish a trusted TLS connection to %s while trying to %s. "
                     .formatted(host, action)
                     + "Trust mode: " + diagnostics.trustSummary() + ". "
-                    + "If you are on a corporate network, configure JAIPILOT_TRUST_STORE / JAIPILOT_TRUST_STORE_PASSWORD "
-                    + "or enable JAIPILOT_USE_SYSTEM_CA=true, then rerun `jaipilot doctor`.";
+                    + "JAIPilot does not override trust settings. Ensure this certificate is trusted by your default JVM/OS trust store, "
+                    + "then rerun `jaipilot doctor`.";
         }
         if (findCause(failure, UnknownHostException.class) != null) {
             return "JAIPilot could not resolve %s while trying to %s. ".formatted(host, action)

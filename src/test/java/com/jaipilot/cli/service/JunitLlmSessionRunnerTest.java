@@ -140,9 +140,8 @@ class JunitLlmSessionRunnerTest {
         assertEquals(List.of("com/example/support/Helper.java"), cache.read(cutPath));
         String progressOutput = progressBuffer.toString();
         assertTrue(progressOutput.matches("(?s).*\\[\\d{2}:\\d{2}:\\d{2}\\].*"));
-        assertTrue(progressOutput.contains("Generating..."));
+        assertTrue(progressOutput.contains("Maximizing coverage..."));
         assertTrue(progressOutput.contains("Reading cached context for " + cutPath));
-        assertTrue(progressOutput.contains("Cached context: com/example/CachedContext.java"));
         assertTrue(progressOutput.contains("Context file: com/example/RequestedContext.java"));
         assertFalse(progressOutput.contains("Submitting backend request"));
         assertFalse(progressOutput.contains("package com.example;\n\npublic class RequestedContext"));
@@ -150,88 +149,6 @@ class JunitLlmSessionRunnerTest {
         assertFalse(progressOutput.contains("Waiting.."));
         assertFalse(progressOutput.contains("Source diff:"));
         assertFalse(progressOutput.contains("\u001B[32m+ "));
-    }
-
-    @Test
-    void runFixUsesTestPathAsUsedContextCacheKey() throws Exception {
-        Path cutPath = write(
-                "src/main/java/com/example/CrashController.java",
-                """
-                package com.example;
-
-                public class CrashController {
-                }
-                """
-        );
-        Path testPath = write(
-                "src/test/java/com/example/CrashControllerTest.java",
-                """
-                package com.example;
-
-                class CrashControllerTest {
-                }
-                """
-        );
-        write(
-                "src/main/java/com/example/RightContext.java",
-                """
-                package com.example;
-
-                public class RightContext {
-                }
-                """
-        );
-        write(
-                "src/main/java/com/example/WrongContext.java",
-                """
-                package com.example;
-
-                public class WrongContext {
-                }
-                """
-        );
-
-        UsedContextClassPathCache cache = new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json"));
-        cache.write(testPath, List.of("com/example/RightContext.java"));
-        cache.write(cutPath, List.of("com/example/WrongContext.java"));
-
-        StubBackendClient backendClient = new StubBackendClient(
-                new FetchJobResponse(
-                        "done",
-                        new FetchJobResponse.FetchJobOutput(
-                                "session-2",
-                                "package com.example;\nclass CrashControllerTest {}\n",
-                                List.of(),
-                                List.of("com/example/RightContext.java")
-                        ),
-                        null,
-                        null
-                )
-        );
-        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
-                backendClient,
-                new ProjectFileService(),
-                cache,
-                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter(), true))
-        );
-
-        runner.run(new JunitLlmSessionRequest(
-                tempDir,
-                cutPath,
-                testPath,
-                JunitLlmOperation.FIX,
-                "session-2",
-                Files.readString(testPath),
-                "",
-                "compile failed"
-        ));
-
-        assertEquals(
-                List.of(
-                        "com/example/RightContext.java =\npackage com.example;\n\npublic class RightContext {\n}\n"
-                ),
-                backendClient.requests.get(0).cachedContextClasses()
-        );
     }
 
     @Test
