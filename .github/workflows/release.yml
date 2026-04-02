@@ -50,7 +50,7 @@ jobs:
         run: ./scripts/smoke-test-install.sh --version "${{ steps.version.outputs.value }}" --classifier "${{ matrix.classifier }}"
 
       - name: Upload release assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bundled-runtime-${{ matrix.classifier }}
           path: |
