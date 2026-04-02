@@ -61,7 +61,13 @@ ensure_tag_absent() {
   tag_name=$1
   git rev-parse -q --verify "refs/tags/$tag_name" >/dev/null 2>&1 && die "Tag already exists locally: $tag_name"
   if [ "$PUSH_CHANGES" -eq 1 ]; then
-    git ls-remote --exit-code --tags origin "refs/tags/$tag_name" >/dev/null 2>&1 && die "Tag already exists on origin: $tag_name"
+    if remote_refs=$(git ls-remote --tags origin "refs/tags/$tag_name" 2>/dev/null); then
+      if [ -n "$remote_refs" ]; then
+        die "Tag already exists on origin: $tag_name"
+      fi
+    else
+      die "Unable to query tags from origin. Verify remote access before releasing."
+    fi
   fi
 }
 

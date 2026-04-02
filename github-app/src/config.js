@@ -75,7 +75,7 @@ function resolveActionRepo() {
     return inferred;
   }
   throw new Error(
-    "Missing JAIPILOT_ACTION_REPO. Set it explicitly (for example: skrcode/jaipilot-cli)."
+    "Missing JAIPILOT_ACTION_REPO. Set it explicitly (for example: JAIPilot/jaipilot-cli)."
   );
 }
 

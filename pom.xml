@@ -11,7 +11,7 @@
 
     <name>JAIPilot CLI</name>
     <description>Zero-config Java Maven CLI for JaCoCo coverage verification and backend-assisted JUnit generation, designed as a test safety harness for AI coding agents.</description>
-    <url>https://github.com/skrcode/jaipilot-cli</url>
+    <url>https://github.com/JAIPilot/jaipilot-cli</url>
 
     <licenses>
         <license>
@@ -22,14 +22,14 @@
     </licenses>
 
     <scm>
-        <connection>scm:git:https://github.com/skrcode/jaipilot-cli.git</connection>
-        <developerConnection>scm:git:ssh://git@github.com/skrcode/jaipilot-cli.git</developerConnection>
-        <url>https://github.com/skrcode/jaipilot-cli</url>
+        <connection>scm:git:https://github.com/JAIPilot/jaipilot-cli.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/JAIPilot/jaipilot-cli.git</developerConnection>
+        <url>https://github.com/JAIPilot/jaipilot-cli</url>
     </scm>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <revision>0.1.4</revision>
+        <revision>0.1.5</revision>
         <maven.compiler.release>17</maven.compiler.release>
         <picocli.version>4.7.7</picocli.version>
         <javaparser.version>3.27.1</javaparser.version>

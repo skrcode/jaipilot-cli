@@ -16,7 +16,7 @@ import java.time.Duration;
 final class GitHubReleaseClient implements ReleaseClient {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private static final String DEFAULT_REPO = "skrcode/jaipilot-cli";
+    private static final String DEFAULT_REPO = "JAIPilot/jaipilot-cli";
     private static final String DEFAULT_API_BASE = "https://api.github.com";
     private static final String DEFAULT_DOWNLOAD_BASE = "https://github.com";
 

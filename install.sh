@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-REPO="skrcode/jaipilot-cli"
+REPO="JAIPilot/jaipilot-cli"
 PREFIX="${HOME}/.local"
 BIN_DIR=""
 APP_DIR=""
