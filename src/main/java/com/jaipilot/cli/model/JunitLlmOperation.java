@@ -1,7 +1,8 @@
 package com.jaipilot.cli.model;
 
 public enum JunitLlmOperation {
-    GENERATE("generate");
+    GENERATE("generate"),
+    FIX("fix");
 
     private final String apiValue;
 

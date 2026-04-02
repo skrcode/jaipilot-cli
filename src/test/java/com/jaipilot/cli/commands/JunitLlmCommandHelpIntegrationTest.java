@@ -22,7 +22,6 @@ class JunitLlmCommandHelpIntegrationTest {
         assertTrue(helpOutput.contains("--maven-executable"));
         assertTrue(helpOutput.contains("--gradle-executable"));
         assertTrue(helpOutput.contains("--timeout-seconds"));
-        assertTrue(helpOutput.contains("--coverage-threshold"));
         assertFalse(helpOutput.contains("--attempt-number"));
         assertFalse(helpOutput.contains("--backend-url"));
         assertFalse(helpOutput.contains("--cached-context"));
@@ -40,7 +39,7 @@ class JunitLlmCommandHelpIntegrationTest {
     }
 
     @Test
-    void rootHelpListsDoctorAndUpdateCommands() {
+    void rootHelpListsGenerateAndUpdateCommands() {
         StringWriter outBuffer = new StringWriter();
         CommandLine commandLine = new CommandLine(new JaiPilotCli())
                 .setOut(new PrintWriter(outBuffer, true))
@@ -49,8 +48,9 @@ class JunitLlmCommandHelpIntegrationTest {
         int exitCode = commandLine.execute("--help");
 
         assertEquals(0, exitCode);
-        assertTrue(outBuffer.toString().contains("doctor"));
+        assertTrue(outBuffer.toString().contains("generate"));
         assertTrue(outBuffer.toString().contains("update"));
+        assertFalse(outBuffer.toString().contains("verify"));
         assertFalse(outBuffer.toString().contains("fix"));
     }
 

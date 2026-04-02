@@ -46,14 +46,14 @@ public final class JaipilotNetworkErrors {
             return "JAIPilot could not reach %s while trying to %s because the configured proxy rejected or blocked the connection. "
                     .formatted(host, action)
                     + "Proxy mode: " + diagnostics.proxySummary() + ". "
-                    + "Check HTTPS_PROXY/HTTP_PROXY/NO_PROXY or JVM proxy settings, then rerun `jaipilot doctor`.";
+                    + "Check HTTPS_PROXY/HTTP_PROXY/NO_PROXY or JVM proxy settings and retry.";
         }
         if (isTlsFailure(failure)) {
             return "JAIPilot could not establish a trusted TLS connection to %s while trying to %s. "
                     .formatted(host, action)
                     + "Trust mode: " + diagnostics.trustSummary() + ". "
                     + "JAIPilot does not override trust settings. Ensure this certificate is trusted by your default JVM/OS trust store, "
-                    + "then rerun `jaipilot doctor`.";
+                    + "then retry.";
         }
         if (findCause(failure, UnknownHostException.class) != null) {
             return "JAIPilot could not resolve %s while trying to %s. ".formatted(host, action)
@@ -68,7 +68,7 @@ public final class JaipilotNetworkErrors {
         return "JAIPilot hit a network error while trying to %s against %s. ".formatted(action, host)
                 + "Trust mode: " + diagnostics.trustSummary() + ". "
                 + "Proxy mode: " + diagnostics.proxySummary() + ". "
-                + "Run `jaipilot doctor` for details.";
+                + "Retry with --verbose for additional details.";
     }
 
     private static boolean isTlsFailure(Throwable failure) {

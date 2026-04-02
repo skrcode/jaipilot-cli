@@ -140,7 +140,7 @@ class JunitLlmSessionRunnerTest {
         assertEquals(List.of("com/example/support/Helper.java"), cache.read(cutPath));
         String progressOutput = progressBuffer.toString();
         assertTrue(progressOutput.matches("(?s).*\\[\\d{2}:\\d{2}:\\d{2}\\].*"));
-        assertTrue(progressOutput.contains("Maximizing coverage..."));
+        assertTrue(progressOutput.contains("Generating..."));
         assertTrue(progressOutput.contains("Reading cached context for " + cutPath));
         assertTrue(progressOutput.contains("Context file: com/example/RequestedContext.java"));
         assertFalse(progressOutput.contains("Submitting backend request"));

@@ -13,32 +13,6 @@ public final class MavenCommandBuilder implements LocalBuildCommandBuilder {
         return BuildTool.MAVEN;
     }
 
-    public List<String> build(
-            Path buildRoot,
-            Path buildPomPath,
-            Path explicitMavenExecutable,
-            List<String> additionalArguments,
-            String jacocoVersion,
-            boolean skipClean,
-            boolean runAggregateCoverage
-    ) {
-        List<String> command = baseCommand(buildRoot, explicitMavenExecutable, additionalArguments);
-        command.add("-f");
-        command.add(buildPomPath.toString());
-        command.add("-DskipTests=false");
-        command.addAll(additionalArguments);
-        if (!skipClean) {
-            command.add("clean");
-        }
-        command.add("org.jacoco:jacoco-maven-plugin:" + jacocoVersion + ":prepare-agent");
-        command.add("test");
-        command.add("org.jacoco:jacoco-maven-plugin:" + jacocoVersion + ":report");
-        if (runAggregateCoverage) {
-            command.add("org.jacoco:jacoco-maven-plugin:" + jacocoVersion + ":report-aggregate");
-        }
-        return command;
-    }
-
     @Override
     public List<String> buildTestCompile(
             Path projectRoot,
@@ -67,24 +41,6 @@ public final class MavenCommandBuilder implements LocalBuildCommandBuilder {
         return command;
     }
 
-    public List<String> buildSingleTestCoverage(
-            Path projectRoot,
-            Path explicitMavenExecutable,
-            List<String> additionalArguments,
-            String testSelector,
-            String jacocoVersion
-    ) {
-        List<String> command = baseCommand(projectRoot, explicitMavenExecutable, additionalArguments);
-        command.add("-DskipTests=false");
-        command.add("-DfailIfNoTests=false");
-        command.add("-Dsurefire.failIfNoSpecifiedTests=false");
-        command.add("-Dtest=" + testSelector);
-        command.add("org.jacoco:jacoco-maven-plugin:" + jacocoVersion + ":prepare-agent");
-        command.add("test");
-        command.add("org.jacoco:jacoco-maven-plugin:" + jacocoVersion + ":report");
-        return command;
-    }
-
     public List<String> buildDependencySourcesDownload(
             Path projectRoot,
             Path explicitMavenExecutable,
@@ -97,13 +53,14 @@ public final class MavenCommandBuilder implements LocalBuildCommandBuilder {
     }
 
     String resolveMavenExecutable(Path buildRoot, Path explicitMavenExecutable) {
-        if (explicitMavenExecutable != null) {
-            return toExecutablePath(buildRoot, explicitMavenExecutable);
-        }
-
         boolean windows = System.getProperty("os.name", "")
                 .toLowerCase(Locale.ROOT)
                 .contains("win");
+        if (explicitMavenExecutable != null) {
+            String explicitExecutable = toExecutablePath(buildRoot, explicitMavenExecutable);
+            return normalizeWrapperExecutable(explicitExecutable, windows);
+        }
+
         String wrapperName = windows ? "mvnw.cmd" : "mvnw";
         Path wrapperPath = findWrapper(buildRoot, wrapperName);
         if (wrapperPath != null) {
@@ -140,11 +97,45 @@ public final class MavenCommandBuilder implements LocalBuildCommandBuilder {
         Path current = buildRoot.normalize();
         while (current != null) {
             Path wrapperPath = current.resolve(wrapperName);
-            if (Files.isRegularFile(wrapperPath)) {
+            if (Files.isRegularFile(wrapperPath) && hasWrapperProperties(current)) {
                 return wrapperPath;
             }
             current = current.getParent();
         }
         return null;
+    }
+
+    private String normalizeWrapperExecutable(String executable, boolean windows) {
+        if (isWrapperPath(executable) && !hasWrapperPropertiesForExecutable(executable)) {
+            return windows ? "mvn.cmd" : "mvn";
+        }
+        return executable;
+    }
+
+    private boolean isWrapperPath(String executable) {
+        String normalized = executable.toLowerCase(Locale.ROOT);
+        return normalized.endsWith("/mvnw")
+                || normalized.endsWith("\\mvnw")
+                || normalized.equals("mvnw")
+                || normalized.endsWith("/mvnw.cmd")
+                || normalized.endsWith("\\mvnw.cmd")
+                || normalized.equals("mvnw.cmd");
+    }
+
+    private boolean hasWrapperPropertiesForExecutable(String executable) {
+        try {
+            Path executablePath = Path.of(executable);
+            if (!Files.isRegularFile(executablePath)) {
+                return true;
+            }
+            Path parent = executablePath.getParent();
+            return parent == null || hasWrapperProperties(parent);
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    private boolean hasWrapperProperties(Path wrapperRoot) {
+        return Files.isRegularFile(wrapperRoot.resolve(".mvn/wrapper/maven-wrapper.properties"));
     }
 }

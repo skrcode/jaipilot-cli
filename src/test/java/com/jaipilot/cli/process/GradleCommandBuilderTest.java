@@ -17,24 +17,6 @@ class GradleCommandBuilderTest {
     Path tempDir;
 
     @Test
-    void buildsVerificationCommand() {
-        List<String> command = commandBuilder.buildVerification(
-                Path.of("/tmp/build-root"),
-                Path.of("custom-gradle"),
-                List.of("--stacktrace"),
-                false
-        );
-
-        assertEquals("custom-gradle", command.get(0));
-        assertTrue(command.contains("--no-daemon"));
-        assertTrue(command.contains("--console=plain"));
-        assertTrue(command.contains("--stacktrace"));
-        assertTrue(command.contains("clean"));
-        assertTrue(command.contains("test"));
-        assertTrue(command.contains("jacocoTestReport"));
-    }
-
-    @Test
     void buildsTestCompileCommand() {
         List<String> command = commandBuilder.buildTestCompile(
                 Path.of("/tmp/project"),
@@ -43,6 +25,8 @@ class GradleCommandBuilderTest {
         );
 
         assertEquals("custom-gradle", command.get(0));
+        assertTrue(command.contains("--no-daemon"));
+        assertTrue(command.contains("--console=plain"));
         assertTrue(command.contains("--stacktrace"));
         assertTrue(command.contains("testClasses"));
     }
@@ -90,37 +74,21 @@ class GradleCommandBuilderTest {
     }
 
     @Test
-    void buildsSingleTestCoverageCommand() {
-        List<String> command = commandBuilder.buildSingleTestCoverage(
+    void buildsDependencySourcesDownloadCommand() {
+        List<String> command = commandBuilder.buildDependencySourcesDownload(
                 Path.of("/tmp/project"),
                 Path.of("custom-gradle"),
                 List.of("--stacktrace"),
-                "com.example.CrashControllerTest",
-                Path.of("/tmp/jacoco-init.gradle")
+                Path.of("/tmp/jaipilot-init.gradle")
         );
 
         assertEquals("custom-gradle", command.get(0));
+        assertTrue(command.contains("--no-daemon"));
+        assertTrue(command.contains("--console=plain"));
         assertTrue(command.contains("--stacktrace"));
         assertTrue(command.contains("-I"));
-        assertTrue(command.contains("/tmp/jacoco-init.gradle"));
-        assertTrue(command.contains("test"));
-        assertTrue(command.contains("--tests"));
-        assertTrue(command.contains("jacocoTestReport"));
-    }
-
-    @Test
-    void buildsModuleScopedSingleTestCoverageCommand() {
-        List<String> command = commandBuilder.buildSingleTestCoverage(
-                Path.of("/tmp/project"),
-                Path.of("custom-gradle"),
-                List.of("--stacktrace"),
-                "com.example.CrashControllerTest",
-                Path.of("/tmp/jacoco-init.gradle"),
-                ":clients"
-        );
-
-        assertTrue(command.contains(":clients:test"));
-        assertTrue(command.contains(":clients:jacocoTestReport"));
+        assertTrue(command.contains("/tmp/jaipilot-init.gradle"));
+        assertTrue(command.contains("jaipilotDownloadSources"));
     }
 
     @Test
@@ -132,5 +100,14 @@ class GradleCommandBuilderTest {
         Files.writeString(wrapper, "#!/usr/bin/env sh\n");
 
         assertEquals(wrapper.toString(), commandBuilder.resolveGradleExecutable(moduleDir, null));
+    }
+
+    @Test
+    void fallsBackToSystemGradleWhenWrapperMissing() throws Exception {
+        Path root = tempDir.resolve("repo");
+        Path moduleDir = root.resolve("module-a");
+        Files.createDirectories(moduleDir);
+
+        assertTrue(commandBuilder.resolveGradleExecutable(moduleDir, null).contains("gradle"));
     }
 }

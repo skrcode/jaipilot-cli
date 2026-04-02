@@ -13,21 +13,6 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
         return BuildTool.GRADLE;
     }
 
-    public List<String> buildVerification(
-            Path projectRoot,
-            Path explicitGradleExecutable,
-            List<String> additionalArguments,
-            boolean skipClean
-    ) {
-        List<String> command = baseCommand(projectRoot, explicitGradleExecutable, additionalArguments);
-        if (!skipClean) {
-            command.add("clean");
-        }
-        command.add("test");
-        command.add("jacocoTestReport");
-        return command;
-    }
-
     @Override
     public List<String> buildTestCompile(
             Path projectRoot,
@@ -69,41 +54,6 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
         command.add(qualifyTask(gradleProjectPath, "test"));
         command.add("--tests");
         command.add(testSelector);
-        return command;
-    }
-
-    public List<String> buildSingleTestCoverage(
-            Path projectRoot,
-            Path explicitGradleExecutable,
-            List<String> additionalArguments,
-            String testSelector,
-            Path initScriptPath
-    ) {
-        return buildSingleTestCoverage(
-                projectRoot,
-                explicitGradleExecutable,
-                additionalArguments,
-                testSelector,
-                initScriptPath,
-                ""
-        );
-    }
-
-    public List<String> buildSingleTestCoverage(
-            Path projectRoot,
-            Path explicitGradleExecutable,
-            List<String> additionalArguments,
-            String testSelector,
-            Path initScriptPath,
-            String gradleProjectPath
-    ) {
-        List<String> command = baseCommand(projectRoot, explicitGradleExecutable, additionalArguments);
-        command.add("-I");
-        command.add(initScriptPath.toString());
-        command.add(qualifyTask(gradleProjectPath, "test"));
-        command.add("--tests");
-        command.add(testSelector);
-        command.add(qualifyTask(gradleProjectPath, "jacocoTestReport"));
         return command;
     }
 

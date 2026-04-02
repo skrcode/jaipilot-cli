@@ -83,8 +83,7 @@ class JunitLlmWorkflowRunnerTest {
                 ),
                 fakeMaven,
                 List.of(),
-                Duration.ofSeconds(10),
-                0.0d
+                Duration.ofSeconds(10)
         );
 
         assertEquals("session-1", result.sessionId());
@@ -151,13 +150,84 @@ class JunitLlmWorkflowRunnerTest {
                         ),
                         fakeMaven,
                         List.of(),
-                        Duration.ofSeconds(10),
-                        0.0d
+                        Duration.ofSeconds(10)
                 )
         );
 
         assertTrue(exception.getMessage().contains("Failed phase: test-compile"));
-        assertEquals(1, backendClient.requests.size());
+        assertTrue(backendClient.requests.size() > 1);
+        assertEquals("generate", backendClient.requests.get(0).type());
+        assertEquals("fix", backendClient.requests.get(1).type());
+    }
+
+    @Test
+    void runFixesGeneratedTestWhenFirstPassFailsValidation() throws Exception {
+        Path projectRoot = tempDir.resolve("fix-success-project");
+        write(projectRoot.resolve("pom.xml"), "<project/>");
+        Path cutPath = write(
+                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
+        Path fakeMaven = writeFakeMaven(projectRoot);
+
+        StubBackendClient backendClient = new StubBackendClient(
+                """
+                package com.example;
+
+                class CrashControllerTest {
+                    // BUILD_FAIL
+                }
+                """,
+                """
+                package com.example;
+
+                class CrashControllerTest {
+                    // PASS
+                }
+                """
+        );
+        ProjectFileService fileService = new ProjectFileService();
+        JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
+                backendClient,
+                fileService,
+                new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json")),
+                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter()))
+        );
+        JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
+                sessionRunner,
+                new MavenCommandBuilder(),
+                new GradleCommandBuilder(),
+                new ProcessExecutor(),
+                fileService
+        );
+
+        JunitLlmSessionResult result = workflowRunner.run(
+                new JunitLlmSessionRequest(
+                        projectRoot,
+                        cutPath,
+                        outputPath,
+                        JunitLlmOperation.GENERATE,
+                        null,
+                        "",
+                        "",
+                        null
+                ),
+                fakeMaven,
+                List.of(),
+                Duration.ofSeconds(10)
+        );
+
+        assertEquals(2, backendClient.requests.size());
+        assertEquals("generate", backendClient.requests.get(0).type());
+        assertEquals("fix", backendClient.requests.get(1).type());
+        assertTrue(backendClient.requests.get(1).clientLogs().contains("Failed phase: test-compile"));
+        assertTrue(Files.readString(result.outputPath()).contains("PASS"));
     }
 
     @Test
@@ -216,8 +286,7 @@ class JunitLlmWorkflowRunnerTest {
                 ),
                 fakeMaven,
                 List.of(),
-                Duration.ofSeconds(10),
-                0.0d
+                Duration.ofSeconds(10)
         );
 
         String buildLogs = buildLogBuffer.toString();
@@ -317,8 +386,7 @@ class JunitLlmWorkflowRunnerTest {
                 ),
                 fakeMaven,
                 List.of(),
-                Duration.ofSeconds(10),
-                0.0d
+                Duration.ofSeconds(10)
         );
 
         assertEquals("session-1", result.sessionId());
@@ -336,6 +404,10 @@ class JunitLlmWorkflowRunnerTest {
     private Path writeFakeMaven(Path projectRoot) throws Exception {
         Path fakeMaven = projectRoot.resolve("mvnw");
         Files.createDirectories(projectRoot);
+        write(
+                projectRoot.resolve(".mvn/wrapper/maven-wrapper.properties"),
+                "distributionUrl=https://repo.maven.apache.org/maven2\n"
+        );
         Files.writeString(fakeMaven, """
                 #!/usr/bin/env sh
                 set -eu
@@ -378,6 +450,10 @@ class JunitLlmWorkflowRunnerTest {
     private Path writeFakeMavenThatDownloadsDependencySources(Path projectRoot) throws Exception {
         Path fakeMaven = projectRoot.resolve("mvnw");
         Files.createDirectories(projectRoot);
+        write(
+                projectRoot.resolve(".mvn/wrapper/maven-wrapper.properties"),
+                "distributionUrl=https://repo.maven.apache.org/maven2\n"
+        );
         Files.writeString(fakeMaven, """
                 #!/usr/bin/env sh
                 set -eu

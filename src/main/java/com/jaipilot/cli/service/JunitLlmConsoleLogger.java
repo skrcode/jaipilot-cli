@@ -23,7 +23,11 @@ public final class JunitLlmConsoleLogger {
     }
 
     public void announceStatus(JunitLlmOperation operation) {
-        info("Maximizing coverage...");
+        if (operation == JunitLlmOperation.FIX) {
+            info("Fixing...");
+            return;
+        }
+        info("Generating...");
     }
 
     public void announceCacheRead(Path filePath, List<String> cachedContextPaths) {

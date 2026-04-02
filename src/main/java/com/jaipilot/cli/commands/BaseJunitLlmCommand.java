@@ -60,14 +60,6 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
     )
     private long timeoutSeconds;
 
-    @Option(
-            names = "--coverage-threshold",
-            defaultValue = "80.0",
-            paramLabel = "<percent>",
-            description = "Required minimum JaCoCo line coverage for the class under test during generate. Default: ${DEFAULT-VALUE}."
-    )
-    private double coverageThreshold;
-
     @Spec
     private CommandSpec spec;
 
@@ -138,8 +130,7 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             ),
                     buildExecutable,
                     List.copyOf(additionalBuildArgs),
-                    Duration.ofSeconds(timeoutSeconds),
-                    coverageThreshold
+                    Duration.ofSeconds(timeoutSeconds)
             );
 
             consoleLogger.announceTestFile(result.outputPath());
@@ -172,12 +163,6 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             throw new CommandLine.ParameterException(
                     spec.commandLine(),
                     "--timeout-seconds must be greater than zero."
-            );
-        }
-        if (Double.isNaN(coverageThreshold) || coverageThreshold < 0.0d || coverageThreshold > 100.0d) {
-            throw new CommandLine.ParameterException(
-                    spec.commandLine(),
-                    "--coverage-threshold must be between 0 and 100."
             );
         }
     }
