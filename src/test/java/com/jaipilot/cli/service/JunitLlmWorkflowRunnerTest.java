@@ -298,6 +298,49 @@ class JunitLlmWorkflowRunnerTest {
         assertFalse(commandLog.stream().anyMatch(line -> line.contains("dependency:sources")));
     }
 
+    @Test
+    void runIgnoresUserBuildArgsForCompilationSanityAndUsesQuietCompile() throws Exception {
+        Path projectRoot = tempDir.resolve("no-build-args-project");
+        write(projectRoot.resolve("pom.xml"), "<project/>");
+        Path cutPath = write(
+                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
+                "package com.example;\npublic class CrashController {}\n"
+        );
+        Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
+        Path fakeMaven = writeFakeMaven(projectRoot);
+
+        StubBackendClient backendClient = new StubBackendClient(outputFinal("""
+                package com.example;
+                class CrashControllerTest {
+                    // PASS
+                }
+                """));
+        JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());
+
+        workflowRunner.run(
+                new JunitLlmSessionRequest(
+                        projectRoot,
+                        cutPath,
+                        outputPath,
+                        JunitLlmOperation.GENERATE,
+                        null,
+                        "",
+                        "",
+                        null
+                ),
+                fakeMaven,
+                List.of("-Pprofile-that-should-be-ignored", "-Dfoo=bar"),
+                Duration.ofSeconds(10)
+        );
+
+        List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
+        assertEquals(2, commandLog.size());
+        assertTrue(commandLog.stream().allMatch(line -> line.contains("test-compile")));
+        assertTrue(commandLog.stream().allMatch(line -> line.contains("-q")));
+        assertFalse(commandLog.stream().anyMatch(line -> line.contains("-Pprofile-that-should-be-ignored")));
+        assertFalse(commandLog.stream().anyMatch(line -> line.contains("-Dfoo=bar")));
+    }
+
     private JunitLlmWorkflowRunner newWorkflowRunner(StubBackendClient backendClient, ProjectFileService fileService) {
         JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
                 backendClient,

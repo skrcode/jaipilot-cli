@@ -90,6 +90,48 @@ class ClasspathClassLocatorTest {
     }
 
     @Test
+    void picksFirstJarOnClasspathWhenSameClassExistsInMultipleVersions() throws Exception {
+        Path projectRoot = tempDir.resolve("repo");
+        Path moduleRoot = projectRoot;
+        Path firstJar = moduleRoot.resolve("libs/acme-utils-1.0.0.jar");
+        Path secondJar = moduleRoot.resolve("libs/acme-utils-2.0.0.jar");
+        Files.createDirectories(firstJar.getParent());
+        createJar(
+                firstJar,
+                "org/acme/Util.class",
+                new byte[] {1},
+                "META-INF/maven/org.acme/acme-utils/pom.properties",
+                pomProperties("org.acme", "acme-utils", "1.0.0")
+        );
+        createJar(
+                secondJar,
+                "org/acme/Util.class",
+                new byte[] {2},
+                "META-INF/maven/org.acme/acme-utils/pom.properties",
+                pomProperties("org.acme", "acme-utils", "2.0.0")
+        );
+
+        ResolvedClasspath classpath = new ResolvedClasspath(
+                BuildToolType.MAVEN,
+                projectRoot,
+                moduleRoot,
+                List.of(firstJar, secondJar),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                "fp-duplicate"
+        );
+
+        ClassResolutionResult result = locator.locate("org.acme.Util", classpath);
+
+        assertEquals(LocationKind.EXTERNAL_JAR, result.kind());
+        assertEquals(firstJar.toAbsolutePath().normalize(), result.containerPath());
+        assertTrue(result.externalCoordinates().isPresent());
+        assertEquals("1.0.0", result.externalCoordinates().get().version());
+    }
+
+    @Test
     void returnsNotFoundWhenClassIsMissing() {
         ResolvedClasspath classpath = new ResolvedClasspath(
                 BuildToolType.GRADLE,

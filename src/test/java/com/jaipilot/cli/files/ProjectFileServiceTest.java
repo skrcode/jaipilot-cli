@@ -1,5 +1,9 @@
 package com.jaipilot.cli.files;
 
+import com.jaipilot.cli.classpath.BuildToolType;
+import com.jaipilot.cli.classpath.ClasspathResolutionException;
+import com.jaipilot.cli.classpath.ResolutionFailure;
+import com.jaipilot.cli.classpath.ResolutionFailureCategory;
 import com.jaipilot.cli.process.BuildTool;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -383,6 +387,47 @@ class ProjectFileServiceTest {
 
         assertTrue(exception.getMessage().contains("Unable to resolve requested context class path com/myntra/commons/dto/MissingDto.java"));
         assertTrue(exception.getMessage().contains("module test classpath"));
+    }
+
+    @Test
+    void readRequestedContextSourcesSurfacesClasspathFailureDetails() throws Exception {
+        Path projectRoot = tempDir.resolve("workspace");
+        Path cutPath = writeSource(
+                projectRoot,
+                "src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        ProjectFileService classpathAwareFileService = new ProjectFileService(
+                List.of(),
+                (ignoredProjectRoot, ignoredModuleRoot, requestedFqcn) -> {
+                    throw new ClasspathResolutionException(new ResolutionFailure(
+                            ResolutionFailureCategory.CLASSPATH_RESOLUTION_FAILED,
+                            BuildToolType.MAVEN,
+                            projectRoot,
+                            "dependency:build-classpath",
+                            "mocked resolver failure"
+                    ));
+                }
+        );
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> classpathAwareFileService.readRequestedContextSources(
+                        projectRoot,
+                        cutPath,
+                        List.of("com/myntra/commons/dto/MissingDto.java")
+                )
+        );
+
+        assertTrue(exception.getMessage().contains("Unable to resolve requested context class path com/myntra/commons/dto/MissingDto.java"));
+        assertTrue(exception.getMessage().contains("CLASSPATH_RESOLUTION_FAILED"));
+        assertTrue(exception.getMessage().contains("dependency:build-classpath"));
+        assertTrue(exception.getMessage().contains("mocked resolver failure"));
     }
 
     @Test

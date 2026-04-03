@@ -122,6 +122,7 @@ public final class MavenClasspathResolver implements CompileCapableClasspathReso
         }
 
         List<String> args = new ArrayList<>(options.buildArgs());
+        args.add("-Dmdep.includeScope=test");
         args.add("-Dmdep.outputFile=" + outputFile);
 
         MavenInvokerClient.MavenExecutionResult executionResult;
@@ -135,7 +136,7 @@ public final class MavenClasspathResolver implements CompileCapableClasspathReso
         } catch (MavenInvocationException exception) {
             throw invocationFailure(
                     moduleRoot,
-                    "dependency:build-classpath -Dmdep.outputFile=" + outputFile,
+                    "dependency:build-classpath -Dmdep.includeScope=test -Dmdep.outputFile=" + outputFile,
                     exception,
                     ResolutionFailureCategory.CLASSPATH_RESOLUTION_FAILED
             );
@@ -145,7 +146,7 @@ public final class MavenClasspathResolver implements CompileCapableClasspathReso
             throw commandFailure(
                     BuildToolType.MAVEN,
                     moduleRoot,
-                    "dependency:build-classpath -Dmdep.outputFile=" + outputFile,
+                    "dependency:build-classpath -Dmdep.includeScope=test -Dmdep.outputFile=" + outputFile,
                     executionResult,
                     ResolutionFailureCategory.CLASSPATH_RESOLUTION_FAILED
             );

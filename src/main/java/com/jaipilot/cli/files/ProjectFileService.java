@@ -1,9 +1,11 @@
 package com.jaipilot.cli.files;
 
 import com.jaipilot.cli.classpath.BuildToolClassResolutionService;
+import com.jaipilot.cli.classpath.ClasspathResolutionException;
 import com.jaipilot.cli.classpath.ClassResolutionResult;
 import com.jaipilot.cli.classpath.LocationKind;
 import com.jaipilot.cli.classpath.ResolutionOptions;
+import com.jaipilot.cli.classpath.ResolutionFailure;
 import com.jaipilot.cli.classpath.ResolvedSource;
 import com.jaipilot.cli.process.BuildTool;
 import com.jaipilot.cli.util.JavaSourceFormatter;
@@ -311,20 +313,21 @@ public final class ProjectFileService {
             return dependencySource.get().content();
         }
 
-        Optional<DependencySource> classpathResolvedSource = resolveDependencySourceViaClasspathIfPresent(
-                projectRoot,
-                preferredSourcePath,
-                requestedPath
-        );
+        Optional<DependencySource> classpathResolvedSource;
+        try {
+            classpathResolvedSource = resolveDependencySourceViaClasspathIfPresent(
+                    projectRoot,
+                    preferredSourcePath,
+                    requestedPath
+            );
+        } catch (ClasspathResolutionException exception) {
+            throw classpathResolutionFailure(requestedPath, exception);
+        }
         if (classpathResolvedSource.isPresent()) {
             return classpathResolvedSource.get().content();
         }
 
-        throw new IllegalStateException(
-                "Unable to resolve requested context class path " + requestedPath
-                        + ". Checked workspace sources and dependency sources. "
-                        + "Ensure the class is on the module test classpath (profiles/build args) and dependency sources are available."
-        );
+        throw new IllegalStateException(unresolvedContextMessage(requestedPath));
     }
 
     private Optional<DependencySource> resolveDependencySourceViaClasspathIfPresent(
@@ -339,35 +342,31 @@ public final class ProjectFileService {
 
         Path normalizedProjectRoot = projectRoot.toAbsolutePath().normalize();
         Path moduleRoot = resolveContextModuleRoot(normalizedProjectRoot, preferredSourcePath);
-        try {
-            Optional<ResolvedContextSource> resolved = contextSourceResolver.resolve(
-                    normalizedProjectRoot,
-                    moduleRoot,
-                    requestedFqcn.get()
-            );
-            if (resolved.isEmpty()) {
-                return Optional.empty();
-            }
-            String content = resolved.get().content();
-            String resolvedContextPath = normalizeContextPath(resolved.get().contextPath());
-            if (!resolvedContextPath.isBlank()) {
-                dependencySourceContentCache.put(resolvedContextPath, content);
-                missingDependencySourcePaths.remove(resolvedContextPath);
-            }
-
-            String requestedContextPath = normalizeContextPath(requestedPath);
-            if (!requestedContextPath.isBlank()) {
-                dependencySourceContentCache.put(requestedContextPath, content);
-                missingDependencySourcePaths.remove(requestedContextPath);
-            }
-
-            String contextPath = resolvedContextPath.isBlank()
-                    ? contextPathFromFqcn(requestedFqcn.get())
-                    : resolvedContextPath;
-            return Optional.of(new DependencySource(contextPath, content));
-        } catch (RuntimeException ignored) {
+        Optional<ResolvedContextSource> resolved = contextSourceResolver.resolve(
+                normalizedProjectRoot,
+                moduleRoot,
+                requestedFqcn.get()
+        );
+        if (resolved.isEmpty()) {
             return Optional.empty();
         }
+        String content = resolved.get().content();
+        String resolvedContextPath = normalizeContextPath(resolved.get().contextPath());
+        if (!resolvedContextPath.isBlank()) {
+            dependencySourceContentCache.put(resolvedContextPath, content);
+            missingDependencySourcePaths.remove(resolvedContextPath);
+        }
+
+        String requestedContextPath = normalizeContextPath(requestedPath);
+        if (!requestedContextPath.isBlank()) {
+            dependencySourceContentCache.put(requestedContextPath, content);
+            missingDependencySourcePaths.remove(requestedContextPath);
+        }
+
+        String contextPath = resolvedContextPath.isBlank()
+                ? contextPathFromFqcn(requestedFqcn.get())
+                : resolvedContextPath;
+        return Optional.of(new DependencySource(contextPath, content));
     }
 
     private Path resolveContextModuleRoot(Path projectRoot, Path preferredSourcePath) {
@@ -1061,6 +1060,32 @@ public final class ProjectFileService {
             }
         }
         return null;
+    }
+
+    private String unresolvedContextMessage(String requestedPath) {
+        return "Unable to resolve requested context class path " + requestedPath
+                + ". Checked workspace sources and dependency sources. "
+                + "Ensure the class is on the module test classpath and dependency sources are available.";
+    }
+
+    private IllegalStateException classpathResolutionFailure(
+            String requestedPath,
+            ClasspathResolutionException exception
+    ) {
+        ResolutionFailure failure = exception.failure();
+        if (failure == null) {
+            return new IllegalStateException(unresolvedContextMessage(requestedPath), exception);
+        }
+
+        String message = unresolvedContextMessage(requestedPath)
+                + " Classpath resolver failure: "
+                + failure.category()
+                + " [tool=" + failure.buildTool()
+                + ", moduleRoot=" + failure.moduleRoot()
+                + ", action=" + failure.actionSummary()
+                + ", output=" + failure.outputSnippet()
+                + "]";
+        return new IllegalStateException(message, exception);
     }
 
     @FunctionalInterface

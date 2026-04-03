@@ -3,9 +3,11 @@ package com.jaipilot.cli.classpath;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -16,14 +18,20 @@ public final class ClasspathClassLocator implements ClassLocator {
 
     private final MavenCoordinateExtractor coordinateExtractor;
     private final Map<String, Path> classEntryJarMemo;
+    private final Set<String> duplicateWarningMemo;
 
     public ClasspathClassLocator() {
-        this(new MavenCoordinateExtractor(), new ConcurrentHashMap<>());
+        this(new MavenCoordinateExtractor(), new ConcurrentHashMap<>(), ConcurrentHashMap.newKeySet());
     }
 
-    ClasspathClassLocator(MavenCoordinateExtractor coordinateExtractor, Map<String, Path> classEntryJarMemo) {
+    ClasspathClassLocator(
+            MavenCoordinateExtractor coordinateExtractor,
+            Map<String, Path> classEntryJarMemo,
+            Set<String> duplicateWarningMemo
+    ) {
         this.coordinateExtractor = coordinateExtractor;
         this.classEntryJarMemo = classEntryJarMemo;
+        this.duplicateWarningMemo = duplicateWarningMemo;
     }
 
     @Override
@@ -106,6 +114,7 @@ public final class ClasspathClassLocator implements ClassLocator {
             );
         }
 
+        List<Path> matches = new ArrayList<>();
         for (Path entry : classpath.classpathEntries()) {
             if (!Files.isRegularFile(entry) || !entry.getFileName().toString().endsWith(".jar")) {
                 continue;
@@ -113,14 +122,20 @@ public final class ClasspathClassLocator implements ClassLocator {
             if (!containsZipEntry(entry, classEntryPath)) {
                 continue;
             }
-            classEntryJarMemo.put(memoKey, entry.toAbsolutePath().normalize());
+            matches.add(entry.toAbsolutePath().normalize());
+        }
+
+        if (!matches.isEmpty()) {
+            Path selectedJar = matches.get(0);
+            classEntryJarMemo.put(memoKey, selectedJar);
+            logDuplicateMatchesIfAny(memoKey, fqcn, selectedJar, matches.subList(1, matches.size()));
             return new ClassResolutionResult(
                     fqcn,
                     LocationKind.EXTERNAL_JAR,
-                    entry.toAbsolutePath().normalize(),
+                    selectedJar,
                     classEntryPath,
                     Optional.empty(),
-                    coordinateExtractor.extract(entry)
+                    coordinateExtractor.extract(selectedJar)
             );
         }
 
@@ -161,5 +176,38 @@ public final class ClasspathClassLocator implements ClassLocator {
     private void logDuration(long startedAt) {
         long durationMillis = (System.nanoTime() - startedAt) / 1_000_000L;
         LOGGER.log(System.Logger.Level.DEBUG, "class lookup duration: {0}ms", durationMillis);
+    }
+
+    private void logDuplicateMatchesIfAny(String memoKey, String fqcn, Path selectedJar, List<Path> alternateJars) {
+        if (alternateJars == null || alternateJars.isEmpty()) {
+            return;
+        }
+
+        String warningKey = memoKey + "::duplicates";
+        if (!duplicateWarningMemo.add(warningKey)) {
+            return;
+        }
+
+        String selected = describeJar(selectedJar);
+        String alternates = alternateJars.stream()
+                .map(this::describeJar)
+                .reduce((left, right) -> left + "; " + right)
+                .orElse("");
+        LOGGER.log(
+                System.Logger.Level.WARNING,
+                "Multiple classpath matches found for {0}. Using {1}; ignored {2}",
+                fqcn,
+                selected,
+                alternates
+        );
+    }
+
+    private String describeJar(Path jarPath) {
+        Optional<MavenCoordinates> coordinates = coordinateExtractor.extract(jarPath);
+        if (coordinates.isEmpty()) {
+            return jarPath.toString();
+        }
+        MavenCoordinates coordinate = coordinates.get();
+        return coordinate.groupId() + ":" + coordinate.artifactId() + ":" + coordinate.version() + " (" + jarPath + ")";
     }
 }

@@ -25,6 +25,8 @@ public final class JunitLlmWorkflowRunner {
 
     private static final PrintWriter QUIET_WRITER = new PrintWriter(Writer.nullWriter());
     private static final int MAX_FIX_ATTEMPTS = 20;
+    private static final List<String> MAVEN_COMPILE_SANITY_ARGS = List.of("-q");
+    private static final List<String> GRADLE_COMPILE_SANITY_ARGS = List.of("--quiet");
 
     private final JunitLlmSessionRunner sessionRunner;
     private final MavenCommandBuilder mavenCommandBuilder;
@@ -91,7 +93,6 @@ public final class JunitLlmWorkflowRunner {
                 initialRequest.cutPath(),
                 initialRequest.outputPath(),
                 buildExecutable,
-                additionalBuildArgs,
                 timeout
         );
         if (preflightFailure != null) {
@@ -106,7 +107,6 @@ public final class JunitLlmWorkflowRunner {
                 buildTool,
                 compilationRoot,
                 buildExecutable,
-                additionalBuildArgs,
                 timeout,
                 normalizeTestCode(initialRequest.initialTestClassCode())
         );
@@ -119,7 +119,6 @@ public final class JunitLlmWorkflowRunner {
             Path requiredClassPath,
             Path outputPath,
             Path buildExecutable,
-            List<String> additionalBuildArgs,
             Duration timeout
     ) throws Exception {
         return withTargetFileExcluded(outputPath, () -> validatePreflightCompilation(
@@ -128,7 +127,6 @@ public final class JunitLlmWorkflowRunner {
                 compilationRoot,
                 requiredClassPath,
                 buildExecutable,
-                additionalBuildArgs,
                 timeout
         ));
     }
@@ -139,7 +137,6 @@ public final class JunitLlmWorkflowRunner {
             Path compilationRoot,
             Path requiredClassPath,
             Path buildExecutable,
-            List<String> additionalBuildArgs,
             Duration timeout
     ) throws Exception {
         ExecutionResult compileResult = executeCompilationSanityCheck(
@@ -148,7 +145,6 @@ public final class JunitLlmWorkflowRunner {
                 compilationRoot,
                 requiredClassPath,
                 buildExecutable,
-                additionalBuildArgs,
                 timeout
         );
         if (!isSuccessful(compileResult)) {
@@ -168,7 +164,6 @@ public final class JunitLlmWorkflowRunner {
             Path compilationRoot,
             Path requiredClassPath,
             Path buildExecutable,
-            List<String> additionalBuildArgs,
             Duration timeout
     ) throws Exception {
         ExecutionResult compileResult = executeCompilationSanityCheck(
@@ -177,7 +172,6 @@ public final class JunitLlmWorkflowRunner {
                 compilationRoot,
                 requiredClassPath,
                 buildExecutable,
-                additionalBuildArgs,
                 timeout
         );
         if (!isSuccessful(compileResult)) {
@@ -192,15 +186,13 @@ public final class JunitLlmWorkflowRunner {
             Path compilationRoot,
             Path requiredClassPath,
             Path buildExecutable,
-            List<String> additionalBuildArgs,
             Duration timeout
     ) throws Exception {
         List<String> command = buildCompilationCommand(
                 buildTool,
                 projectRoot,
                 requiredClassPath,
-                buildExecutable,
-                additionalBuildArgs
+                buildExecutable
         );
         Path workingDirectory = buildTool == BuildTool.MAVEN
                 ? compilationRoot
@@ -214,7 +206,6 @@ public final class JunitLlmWorkflowRunner {
             BuildTool buildTool,
             Path compilationRoot,
             Path buildExecutable,
-            List<String> additionalBuildArgs,
             Duration timeout,
             String lastCompiledTestCode
     ) throws Exception {
@@ -229,7 +220,6 @@ public final class JunitLlmWorkflowRunner {
                     compilationRoot,
                     initialRequest.cutPath(),
                     buildExecutable,
-                    additionalBuildArgs,
                     timeout
             );
             latestCompiledTestCode = currentTestCode;
@@ -271,7 +261,6 @@ public final class JunitLlmWorkflowRunner {
                     compilationRoot,
                     initialRequest.cutPath(),
                     buildExecutable,
-                    additionalBuildArgs,
                     timeout
             );
             latestCompiledTestCode = currentTestCode;
@@ -451,15 +440,18 @@ public final class JunitLlmWorkflowRunner {
             BuildTool buildTool,
             Path projectRoot,
             Path requiredClassPath,
-            Path buildExecutable,
-            List<String> additionalBuildArgs
+            Path buildExecutable
     ) {
         return switch (buildTool) {
-            case MAVEN -> mavenCommandBuilder.buildTestCompile(projectRoot, buildExecutable, additionalBuildArgs);
+            case MAVEN -> mavenCommandBuilder.buildTestCompile(
+                    projectRoot,
+                    buildExecutable,
+                    MAVEN_COMPILE_SANITY_ARGS
+            );
             case GRADLE -> gradleCommandBuilder.buildTestCompile(
                     projectRoot,
                     buildExecutable,
-                    additionalBuildArgs,
+                    GRADLE_COMPILE_SANITY_ARGS,
                     gradleProjectPath(buildTool, projectRoot, requiredClassPath)
             );
         };
