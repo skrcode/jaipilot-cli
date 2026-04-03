@@ -146,6 +146,22 @@ class GradleCommandBuilderTest {
     }
 
     @Test
+    void buildsSpotlessApplyCommand() {
+        List<String> command = commandBuilder.buildSpotlessApply(
+                Path.of("/tmp/project"),
+                Path.of("custom-gradle"),
+                List.of("--stacktrace"),
+                ":clients"
+        );
+
+        assertEquals("custom-gradle", command.get(0));
+        assertTrue(command.contains("--no-daemon"));
+        assertTrue(command.contains("--console=plain"));
+        assertTrue(command.contains("--stacktrace"));
+        assertTrue(command.contains(":clients:spotlessApply"));
+    }
+
+    @Test
     void resolvesWrapperFromAncestorProjectRoot() throws Exception {
         Path root = tempDir.resolve("repo");
         Path moduleDir = root.resolve("module-a");

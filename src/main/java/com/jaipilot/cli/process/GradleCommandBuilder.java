@@ -110,6 +110,17 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
         return command;
     }
 
+    public List<String> buildSpotlessApply(
+            Path projectRoot,
+            Path explicitGradleExecutable,
+            List<String> additionalArguments,
+            String gradleProjectPath
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitGradleExecutable, additionalArguments);
+        command.add(qualifyTask(gradleProjectPath, "spotlessApply"));
+        return command;
+    }
+
     String resolveGradleExecutable(Path buildRoot, Path explicitGradleExecutable) {
         if (explicitGradleExecutable != null) {
             return toExecutablePath(buildRoot, explicitGradleExecutable);

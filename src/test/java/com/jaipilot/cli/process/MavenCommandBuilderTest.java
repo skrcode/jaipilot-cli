@@ -95,9 +95,27 @@ class MavenCommandBuilderTest {
         assertTrue(command.contains("-ntp"));
         assertTrue(command.contains("-DskipITs"));
         assertTrue(command.contains("-Dtest=com.example.CrashControllerTest"));
-        assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.12:prepare-agent"));
         assertTrue(command.contains("test"));
-        assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.12:report"));
+        assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.13:report"));
+    }
+
+    @Test
+    void buildsSingleTestCoverageWithPrepareAgentCommand() {
+        List<String> command = commandBuilder.buildSingleTestCoverageWithPrepareAgent(
+                Path.of("/tmp/project"),
+                Path.of("custom-mvn"),
+                List.of("-DskipITs"),
+                "com.example.CrashControllerTest"
+        );
+
+        assertEquals("custom-mvn", command.get(0));
+        assertTrue(command.contains("-B"));
+        assertTrue(command.contains("-ntp"));
+        assertTrue(command.contains("-DskipITs"));
+        assertTrue(command.contains("-Dtest=com.example.CrashControllerTest"));
+        assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.13:prepare-agent"));
+        assertTrue(command.contains("test"));
+        assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.13:report"));
     }
 
     @Test

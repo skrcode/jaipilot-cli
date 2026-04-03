@@ -21,6 +21,8 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
+import java.net.URI;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -285,6 +287,16 @@ public final class JunitLlmWorkflowRunner {
                 projectRoot,
                 timeout
         );
+        codebaseRulesResult = tryAutoFormatGradleAndRetryCodebaseRules(
+                buildTool,
+                projectRoot,
+                outputPath,
+                buildExecutable,
+                additionalBuildArgs,
+                timeout,
+                gradleProjectPath,
+                codebaseRulesResult
+        );
         if (!isSuccessful(codebaseRulesResult)) {
             return new ValidationFailure("codebase-rules", codebaseRulesResult, null);
         }
@@ -306,6 +318,63 @@ public final class JunitLlmWorkflowRunner {
         }
 
         return null;
+    }
+
+    private ExecutionResult tryAutoFormatGradleAndRetryCodebaseRules(
+            BuildTool buildTool,
+            Path projectRoot,
+            Path outputPath,
+            Path buildExecutable,
+            List<String> additionalBuildArgs,
+            Duration timeout,
+            String gradleProjectPath,
+            ExecutionResult codebaseRulesResult
+    ) throws Exception {
+        if (buildTool != BuildTool.GRADLE || isSuccessful(codebaseRulesResult)
+                || !shouldRunGradleSpotlessApply(codebaseRulesResult.output())) {
+            return codebaseRulesResult;
+        }
+
+        progress("Detected Spotless formatting violations; running spotlessApply before retrying codebase rules.");
+        ExecutionResult formatResult = executeBuildCommand(
+                gradleCommandBuilder.buildSpotlessApply(
+                        projectRoot,
+                        buildExecutable,
+                        additionalBuildArgs,
+                        gradleProjectPath
+                ),
+                projectRoot,
+                timeout
+        );
+        if (!isSuccessful(formatResult)) {
+            return mergeExecutionResults(
+                    formatResult,
+                    codebaseRulesResult.output(),
+                    "Spotless auto-format attempt failed."
+            );
+        }
+
+        progress("spotlessApply completed; retrying codebase rules validation.");
+        ExecutionResult retryResult = executeBuildCommand(
+                buildCodebaseRulesValidationCommand(
+                        buildTool,
+                        projectRoot,
+                        outputPath,
+                        buildExecutable,
+                        additionalBuildArgs
+                ),
+                projectRoot,
+                timeout
+        );
+        if (isSuccessful(retryResult)) {
+            return retryResult;
+        }
+
+        return mergeExecutionResults(
+                retryResult,
+                codebaseRulesResult.output(),
+                "Codebase rules still failed after spotlessApply."
+        );
     }
 
     private ValidationPassResult fixUntilValidationPasses(
@@ -555,7 +624,32 @@ public final class JunitLlmWorkflowRunner {
             );
         }
 
-        CoverageSnapshot snapshot = readJacocoLineCoverage(reportPath, coverageCoordinate);
+        CoverageSnapshot snapshot;
+        try {
+            snapshot = readJacocoLineCoverage(reportPath, coverageCoordinate);
+        } catch (IllegalStateException exception) {
+            if (!shouldRetryMavenCoverageWithPrepareAgent(buildTool, reportPath, coverageResult.output())) {
+                throw exception;
+            }
+            progress("JaCoCo report missing after initial coverage run; retrying with explicit JaCoCo agent.");
+            ExecutionResult retryCoverageResult = executeBuildCommand(
+                    mavenCommandBuilder.buildSingleTestCoverageWithPrepareAgent(
+                            projectRoot,
+                            buildExecutable,
+                            additionalBuildArgs,
+                            testSelector
+                    ),
+                    projectRoot,
+                    timeout
+            );
+            if (!isSuccessful(retryCoverageResult)) {
+                throw new IllegalStateException(
+                        "Coverage collection failed after explicit JaCoCo agent retry. Failure details: "
+                                + failureDetails(retryCoverageResult.output(), 8)
+                );
+            }
+            snapshot = readJacocoLineCoverage(reportPath, coverageCoordinate);
+        }
         progress("JaCoCo report: " + reportPath);
         return snapshot;
     }
@@ -844,8 +938,12 @@ public final class JunitLlmWorkflowRunner {
                 buildLogWriter
         );
         if (shouldRetryWithoutMavenWrapper(result)) {
+            String systemMavenCommand = systemMavenCommand();
+            if (!isCommandAvailable(systemMavenCommand)) {
+                return result;
+            }
             List<String> fallbackCommand = new ArrayList<>(command);
-            fallbackCommand.set(0, systemMavenCommand());
+            fallbackCommand.set(0, systemMavenCommand);
             buildLogWriter.println("PROGRESS: Maven wrapper is incomplete; retrying with `" + fallbackCommand.get(0) + "`.");
             buildLogWriter.flush();
             return processExecutor.execute(
@@ -869,9 +967,22 @@ public final class JunitLlmWorkflowRunner {
             return false;
         }
         String output = result.output() == null ? "" : result.output().toLowerCase(Locale.ROOT);
-        return output.contains("mavenwrappermain")
-                || output.contains("maven-wrapper.properties file does not exist")
+        return output.contains("maven-wrapper.properties file does not exist")
                 || output.contains("could not find or load main class org.apache.maven.wrapper.mavenwrappermain");
+    }
+
+    private boolean shouldRunGradleSpotlessApply(String output) {
+        if (output == null || output.isBlank()) {
+            return false;
+        }
+        String normalizedOutput = output.toLowerCase(Locale.ROOT);
+        if (!normalizedOutput.contains("spotless")) {
+            return false;
+        }
+        return normalizedOutput.contains("spotlessjavacheck")
+                || normalizedOutput.contains("spotlesscheck")
+                || normalizedOutput.contains("format violations")
+                || normalizedOutput.contains("spotlessapply");
     }
 
     private String systemMavenCommand() {
@@ -879,6 +990,74 @@ public final class JunitLlmWorkflowRunner {
                 .toLowerCase(Locale.ROOT)
                 .contains("win");
         return windows ? "mvn.cmd" : "mvn";
+    }
+
+    private boolean isCommandAvailable(String executable) {
+        if (executable == null || executable.isBlank()) {
+            return false;
+        }
+        boolean windows = System.getProperty("os.name", "")
+                .toLowerCase(Locale.ROOT)
+                .contains("win");
+        try {
+            if (executable.contains("/") || executable.contains("\\")) {
+                Path candidate = Path.of(executable);
+                return Files.isRegularFile(candidate) && (windows || Files.isExecutable(candidate));
+            }
+            String path = System.getenv("PATH");
+            if (path == null || path.isBlank()) {
+                return false;
+            }
+            String[] suffixes = windows ? new String[] {"", ".cmd", ".bat", ".exe"} : new String[] {""};
+            for (String directory : path.split(Pattern.quote(System.getProperty("path.separator", ":")))) {
+                if (directory == null || directory.isBlank()) {
+                    continue;
+                }
+                for (String suffix : suffixes) {
+                    Path candidate = Path.of(directory, executable + suffix);
+                    if (Files.isRegularFile(candidate) && (windows || Files.isExecutable(candidate))) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private boolean shouldRetryMavenCoverageWithPrepareAgent(
+            BuildTool buildTool,
+            Path reportPath,
+            String output
+    ) {
+        if (buildTool != BuildTool.MAVEN || Files.isRegularFile(reportPath)) {
+            return false;
+        }
+        String normalizedOutput = output == null ? "" : output.toLowerCase(Locale.ROOT);
+        return normalizedOutput.contains("skipping jacoco execution due to missing execution data file")
+                || normalizedOutput.contains("missing execution data file");
+    }
+
+    private ExecutionResult mergeExecutionResults(
+            ExecutionResult latestResult,
+            String previousOutput,
+            String contextMessage
+    ) {
+        StringBuilder mergedOutput = new StringBuilder();
+        if (previousOutput != null && !previousOutput.isBlank()) {
+            mergedOutput.append(previousOutput.strip()).append(System.lineSeparator()).append(System.lineSeparator());
+        }
+        mergedOutput.append(contextMessage).append(System.lineSeparator());
+        if (latestResult.output() != null && !latestResult.output().isBlank()) {
+            mergedOutput.append(latestResult.output().strip()).append(System.lineSeparator());
+        }
+        return new ExecutionResult(
+                latestResult.command(),
+                latestResult.exitCode(),
+                latestResult.timedOut(),
+                mergedOutput.toString()
+        );
     }
 
     private BuildTool resolveBuildTool(Path projectRoot, Path explicitBuildExecutable) {
@@ -993,11 +1172,12 @@ public final class JunitLlmWorkflowRunner {
     }
 
     private String failureDetails(String output, int fallbackTailLines) {
-        String summarized = SensitiveDataRedactor.redactBuildOutput(output);
+        String enrichedOutput = enrichBuildOutputWithStaticAnalysisDetails(output);
+        String summarized = SensitiveDataRedactor.redactBuildOutput(enrichedOutput);
         if (summarized != null && !summarized.isBlank()) {
             return summarized;
         }
-        return tail(SensitiveDataRedactor.redact(output), fallbackTailLines);
+        return tail(SensitiveDataRedactor.redact(enrichedOutput), fallbackTailLines);
     }
 
     private void progress(String message) {
@@ -1007,6 +1187,142 @@ public final class JunitLlmWorkflowRunner {
 
     private String percentage(double ratio) {
         return String.format(Locale.ROOT, "%.2f%%", ratio * 100.0d);
+    }
+
+    private String enrichBuildOutputWithStaticAnalysisDetails(String output) {
+        if (output == null || output.isBlank()) {
+            return output;
+        }
+        List<String> checkstyleDetails = extractCheckstyleViolationDetails(output);
+        if (checkstyleDetails.isEmpty()) {
+            return output;
+        }
+        StringBuilder builder = new StringBuilder(output.stripTrailing());
+        builder.append(System.lineSeparator())
+                .append("Extracted checkstyle violations:")
+                .append(System.lineSeparator());
+        for (String detail : checkstyleDetails) {
+            builder.append(detail).append(System.lineSeparator());
+        }
+        return builder.toString();
+    }
+
+    private List<String> extractCheckstyleViolationDetails(String output) {
+        List<Path> candidateReports = checkstyleReportCandidates(output);
+        if (candidateReports.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> details = new ArrayList<>();
+        for (Path reportPath : candidateReports) {
+            readCheckstyleViolations(reportPath, details, 15);
+            if (!details.isEmpty()) {
+                break;
+            }
+        }
+        return details;
+    }
+
+    private List<Path> checkstyleReportCandidates(String output) {
+        List<Path> reports = new ArrayList<>();
+        for (String line : output.lines().toList()) {
+            String trimmed = line.trim();
+            int markerIndex = trimmed.toLowerCase(Locale.ROOT).indexOf("see the report at:");
+            if (markerIndex < 0) {
+                continue;
+            }
+            String uriText = trimmed.substring(markerIndex + "see the report at:".length()).trim();
+            if (uriText.isBlank() || !uriText.startsWith("file:")) {
+                continue;
+            }
+            try {
+                Path reportPath = Path.of(URI.create(uriText)).normalize();
+                addCheckstyleReportCandidates(reportPath, reports);
+            } catch (Exception ignored) {
+                // ignore malformed URIs
+            }
+        }
+        return reports;
+    }
+
+    private void addCheckstyleReportCandidates(Path reportPath, List<Path> reports) {
+        if (reportPath == null) {
+            return;
+        }
+        String fileName = reportPath.getFileName() == null ? "" : reportPath.getFileName().toString();
+        if (fileName.endsWith(".xml")) {
+            reports.add(reportPath);
+            return;
+        }
+        if (fileName.endsWith(".html")) {
+            reports.add(reportPath.resolveSibling(fileName.substring(0, fileName.length() - ".html".length()) + ".xml"));
+        }
+        Path parent = reportPath.getParent();
+        if (parent != null) {
+            reports.add(parent.resolve("test.xml"));
+            reports.add(parent.resolve("main.xml"));
+        }
+    }
+
+    private void readCheckstyleViolations(Path reportPath, List<String> details, int maxDetails) {
+        if (reportPath == null || !Files.isRegularFile(reportPath) || details.size() >= maxDetails) {
+            return;
+        }
+
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+
+            try (InputStream reportStream = Files.newInputStream(reportPath)) {
+                NodeList fileNodes = factory.newDocumentBuilder()
+                        .parse(reportStream)
+                        .getElementsByTagName("file");
+                for (int fileIndex = 0; fileIndex < fileNodes.getLength() && details.size() < maxDetails; fileIndex++) {
+                    Node fileNode = fileNodes.item(fileIndex);
+                    if (!(fileNode instanceof Element fileElement)) {
+                        continue;
+                    }
+                    String fileName = fileElement.getAttribute("name");
+                    NodeList errorNodes = fileElement.getElementsByTagName("error");
+                    for (int errorIndex = 0; errorIndex < errorNodes.getLength() && details.size() < maxDetails; errorIndex++) {
+                        Node errorNode = errorNodes.item(errorIndex);
+                        if (!(errorNode instanceof Element errorElement)) {
+                            continue;
+                        }
+                        details.add(formatCheckstyleViolation(fileName, errorElement));
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // ignore parsing issues; original build output remains available
+        }
+    }
+
+    private String formatCheckstyleViolation(String fileName, Element errorElement) {
+        String line = errorElement.getAttribute("line");
+        String column = errorElement.getAttribute("column");
+        String severity = errorElement.getAttribute("severity");
+        String message = errorElement.getAttribute("message");
+        StringBuilder builder = new StringBuilder();
+        builder.append(fileName == null || fileName.isBlank() ? "<unknown-file>" : fileName);
+        if (line != null && !line.isBlank()) {
+            builder.append(':').append(line);
+            if (column != null && !column.isBlank()) {
+                builder.append(':').append(column);
+            }
+        }
+        if (severity != null && !severity.isBlank()) {
+            builder.append(" [").append(severity).append(']');
+        }
+        if (message != null && !message.isBlank()) {
+            builder.append(' ').append(message);
+        }
+        return builder.toString();
     }
 
     @FunctionalInterface

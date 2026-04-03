@@ -8,7 +8,7 @@ import java.util.Locale;
 
 public final class MavenCommandBuilder implements LocalBuildCommandBuilder {
 
-    private static final String JACOCO_PLUGIN_COORDINATE = "org.jacoco:jacoco-maven-plugin:0.8.12";
+    private static final String JACOCO_PLUGIN_COORDINATE = "org.jacoco:jacoco-maven-plugin:0.8.13";
 
     @Override
     public BuildTool buildTool() {
@@ -68,6 +68,22 @@ public final class MavenCommandBuilder implements LocalBuildCommandBuilder {
     }
 
     public List<String> buildSingleTestCoverage(
+            Path projectRoot,
+            Path explicitMavenExecutable,
+            List<String> additionalArguments,
+            String testSelector
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitMavenExecutable, additionalArguments);
+        command.add("-DskipTests=false");
+        command.add("-DfailIfNoTests=false");
+        command.add("-Dsurefire.failIfNoSpecifiedTests=false");
+        command.add("-Dtest=" + testSelector);
+        command.add("test");
+        command.add(JACOCO_PLUGIN_COORDINATE + ":report");
+        return command;
+    }
+
+    public List<String> buildSingleTestCoverageWithPrepareAgent(
             Path projectRoot,
             Path explicitMavenExecutable,
             List<String> additionalArguments,
