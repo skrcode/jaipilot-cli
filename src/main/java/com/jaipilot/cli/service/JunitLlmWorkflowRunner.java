@@ -41,6 +41,7 @@ public final class JunitLlmWorkflowRunner {
     private static final PrintWriter QUIET_WRITER = new PrintWriter(Writer.nullWriter());
     private static final int MAX_FIX_ATTEMPTS = 20;
     private static final int MAX_COVERAGE_FIX_ATTEMPTS = 6;
+    private static final int MAX_MISSING_CONTEXT_RETRIES = 3;
     private static final double TARGET_LINE_COVERAGE = 0.80d;
 
     private static final String GRADLE_DEPENDENCY_SOURCES_INIT_SCRIPT = """
@@ -101,7 +102,7 @@ public final class JunitLlmWorkflowRunner {
     private final ProjectFileService fileService;
     private final boolean streamBuildLogs;
     private final PrintWriter buildLogWriter;
-    private boolean dependencySourceDownloadAttempted;
+    private int missingContextRetryCount;
 
     public JunitLlmWorkflowRunner(
             JunitLlmSessionRunner sessionRunner,
@@ -145,7 +146,7 @@ public final class JunitLlmWorkflowRunner {
             List<String> additionalBuildArgs,
             Duration timeout
     ) throws Exception {
-        dependencySourceDownloadAttempted = false;
+        missingContextRetryCount = 0;
         BuildTool buildTool = resolveBuildTool(initialRequest.projectRoot(), buildExecutable);
         ValidationFailure preflightFailure = validateProjectBeforeStarting(
                 buildTool,
@@ -159,19 +160,17 @@ public final class JunitLlmWorkflowRunner {
             throw new IllegalStateException(preflightFailureMessage(preflightFailure));
         }
 
-        boolean initialDependencySourcesDownloadSuccessful = tryDownloadDependencySources(
-                buildTool,
-                initialRequest.projectRoot(),
-                buildExecutable,
-                additionalBuildArgs,
-                timeout
+        announceDependencySourceDownloadResult(
+                tryDownloadDependencySources(
+                        buildTool,
+                        initialRequest.projectRoot(),
+                        buildExecutable,
+                        additionalBuildArgs,
+                        timeout
+                ),
+                "Dependency sources were downloaded during preflight.",
+                "Dependency source download during preflight did not complete; on-demand retry is enabled."
         );
-        dependencySourceDownloadAttempted = initialDependencySourcesDownloadSuccessful;
-        if (initialDependencySourcesDownloadSuccessful) {
-            progress("Dependency sources were downloaded during preflight.");
-        } else {
-            progress("Dependency source download during preflight did not complete; on-demand retry is enabled.");
-        }
 
         JunitLlmSessionResult latestSessionResult = runSessionWithDependencySourceRetry(
                 initialRequest,
@@ -990,16 +989,39 @@ public final class JunitLlmWorkflowRunner {
             List<String> additionalBuildArgs,
             Duration timeout
     ) throws Exception {
-        try {
-            return sessionRunner.run(request);
-        } catch (IllegalStateException exception) {
-            if (!shouldRetryForMissingContextPath(exception) || dependencySourceDownloadAttempted) {
-                throw exception;
+        while (true) {
+            try {
+                return sessionRunner.run(request);
+            } catch (IllegalStateException exception) {
+                if (!shouldRetryForMissingContextPath(exception)
+                        || missingContextRetryCount >= MAX_MISSING_CONTEXT_RETRIES) {
+                    throw exception;
+                }
+                missingContextRetryCount++;
+                int remainingRetries = MAX_MISSING_CONTEXT_RETRIES - missingContextRetryCount;
+                announceDependencySourceDownloadResult(
+                        tryDownloadDependencySources(
+                                buildTool,
+                                request.projectRoot(),
+                                buildExecutable,
+                                additionalBuildArgs,
+                                timeout
+                        ),
+                        "Dependency sources were refreshed after missing context class path; retrying backend session. "
+                                + "Retries remaining: " + remainingRetries + ".",
+                        "Dependency source refresh after missing context class path did not complete; retrying backend session. "
+                                + "Retries remaining: " + remainingRetries + "."
+                );
             }
-            dependencySourceDownloadAttempted = true;
-            tryDownloadDependencySources(buildTool, request.projectRoot(), buildExecutable, additionalBuildArgs, timeout);
-            return sessionRunner.run(request);
         }
+    }
+
+    private void announceDependencySourceDownloadResult(
+            boolean successful,
+            String successMessage,
+            String failureMessage
+    ) {
+        progress(successful ? successMessage : failureMessage);
     }
 
     private boolean shouldRetryForMissingContextPath(IllegalStateException exception) {
@@ -1028,6 +1050,7 @@ public final class JunitLlmWorkflowRunner {
                 additionalBuildArgs,
                 timeout
         );
+        fileService.refreshDependencySourceIndex();
         return result != null && isSuccessful(result);
     }
 

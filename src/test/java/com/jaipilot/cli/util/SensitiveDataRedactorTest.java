@@ -65,4 +65,37 @@ class SensitiveDataRedactorTest {
         assertFalse(redacted.contains("CrashControllerTest.shouldReturnOk"));
         assertFalse(redacted.contains("... 23 more"));
     }
+
+    @Test
+    void redactBuildOutputExcludesWarningsButKeepsCompileAndAssertionErrors() {
+        String output = """
+                [WARNING] /repo/src/main/java/com/example/Demo.java:[12,1] Generating equals/hashCode implementation
+                [ERROR] /repo/src/main/java/com/example/Demo.java:[20,17] cannot find symbol
+                symbol:   class MissingType
+                location: class com.example.Demo
+                [ERROR] Tests run: 1, Failures: 1
+                org.opentest4j.AssertionFailedError: expected: <200> but was: <500>
+                """;
+
+        String redacted = SensitiveDataRedactor.redactBuildOutput(output);
+
+        assertTrue(redacted.contains("cannot find symbol"));
+        assertTrue(redacted.contains("symbol:   class MissingType"));
+        assertTrue(redacted.contains("location: class com.example.Demo"));
+        assertTrue(redacted.contains("AssertionFailedError: expected: <200> but was: <500>"));
+        assertFalse(redacted.contains("[WARNING]"));
+        assertFalse(redacted.contains("Generating equals/hashCode"));
+    }
+
+    @Test
+    void redactBuildOutputReturnsExplicitMessageWhenOnlyWarningsArePresent() {
+        String output = """
+                [WARNING] /repo/src/main/java/com/example/Demo.java:[12,1] Some warning
+                WARNING: A Java agent has been loaded dynamically
+                """;
+
+        String redacted = SensitiveDataRedactor.redactBuildOutput(output);
+
+        assertEquals("Build failed but no explicit error lines were captured.", redacted);
+    }
 }

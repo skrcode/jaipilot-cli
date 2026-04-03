@@ -9,7 +9,7 @@ public final class SensitiveDataRedactor {
     private static final int MAX_BACKEND_LINES = 24;
     private static final int MAX_BACKEND_CHARS = 3_500;
     private static final int MAX_LINE_LENGTH = 220;
-    private static final int FALLBACK_TAIL_LINES = 10;
+    private static final String NO_ERROR_LINES_MESSAGE = "Build failed but no explicit error lines were captured.";
     private static final List<RedactionRule> REDACTION_RULES = List.of(
             rule("(?i)(Authorization\\s*:\\s*Bearer\\s+)([^\\s]+)", "$1[REDACTED]"),
             rule("(?i)(Bearer\\s+)([A-Za-z0-9._~+/=-]+)", "$1[REDACTED]"),
@@ -42,7 +42,6 @@ public final class SensitiveDataRedactor {
             Pattern.compile("(?i)^\\s*there were failing tests"),
             Pattern.compile("(?i)^\\s*compilation failure"),
             Pattern.compile("(?i)^\\s*caused by:"),
-            Pattern.compile("(?i)^\\s*.+\\.java:\\d+.*"),
             Pattern.compile("(?i)\\b(error|errors|failure|failures|failed|exception|assertion|cannot find symbol|package .+ does not exist|symbol:|location:|expected:|but was:|wanted but not invoked|comparison failure|initializationerror|no tests found|timed out)\\b"),
             Pattern.compile("^\\s*\\^\\s*$")
     );
@@ -94,6 +93,9 @@ public final class SensitiveDataRedactor {
                 stackTraceLinesOmitted++;
                 continue;
             }
+            if (isWarningLine(line)) {
+                continue;
+            }
 
             boolean signalLine = isSignalLine(line);
             if (signalLine) {
@@ -102,19 +104,23 @@ public final class SensitiveDataRedactor {
                 continue;
             }
 
-            if (contextLinesRemaining > 0 && !isLowSignalLine(line)) {
+            if (contextLinesRemaining > 0 && !isLowSignalLine(line) && !isWarningLine(line)) {
                 addLine(excerpt, line);
                 contextLinesRemaining--;
             }
         }
 
         if (excerpt.isEmpty()) {
-            int startIndex = Math.max(0, lines.size() - FALLBACK_TAIL_LINES);
-            for (String line : lines.subList(startIndex, lines.size())) {
-                if (!isStackTraceNoise(line)) {
-                    addLine(excerpt, line);
+            for (String line : lines) {
+                if (isStackTraceNoise(line) || isWarningLine(line) || !isSignalLine(line)) {
+                    continue;
                 }
+                addLine(excerpt, line);
             }
+        }
+
+        if (excerpt.isEmpty()) {
+            return NO_ERROR_LINES_MESSAGE;
         }
 
         if (stackTraceLinesOmitted > 0) {
@@ -139,6 +145,16 @@ public final class SensitiveDataRedactor {
 
     private static boolean isStackTraceNoise(String line) {
         return STACK_TRACE_LINE.matcher(line).matches() || OMITTED_STACK_TRACE_LINE.matcher(line).matches();
+    }
+
+    private static boolean isWarningLine(String line) {
+        if (line == null) {
+            return false;
+        }
+        String normalized = line.trim().toLowerCase();
+        return normalized.startsWith("[warning]")
+                || normalized.startsWith("warning:")
+                || normalized.contains(" warning:");
     }
 
     private static boolean isLowSignalLine(String line) {

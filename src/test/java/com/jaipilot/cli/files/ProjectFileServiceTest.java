@@ -308,6 +308,167 @@ class ProjectFileServiceTest {
     }
 
     @Test
+    void readRequestedContextSourcesFindsNewDependencySourcesAfterRefresh() throws Exception {
+        Path projectRoot = tempDir.resolve("workspace");
+        Path cutPath = writeSource(
+                projectRoot,
+                "src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path dependencyCacheRoot = tempDir.resolve("gradle-caches");
+        ProjectFileService dependencyAwareFileService = new ProjectFileService(List.of(dependencyCacheRoot));
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> dependencyAwareFileService.readRequestedContextSources(
+                        projectRoot,
+                        cutPath,
+                        List.of("com.google.common.base.Strings")
+                )
+        );
+
+        writeSourceJarEntry(
+                dependencyCacheRoot.resolve("com/google/guava/guava/33.2.1/abc123/guava-33.2.1-sources.jar"),
+                "com/google/common/base/Strings.java",
+                """
+                package com.google.common.base;
+
+                public final class Strings {
+                }
+                """
+        );
+
+        dependencyAwareFileService.refreshDependencySourceIndex();
+        List<String> contextSources = dependencyAwareFileService.readRequestedContextSources(
+                projectRoot,
+                cutPath,
+                List.of("com.google.common.base.Strings")
+        );
+
+        assertEquals(1, contextSources.size());
+        assertTrue(contextSources.get(0).contains("package com.google.common.base;"));
+        assertTrue(contextSources.get(0).contains("class Strings"));
+    }
+
+    @Test
+    void readRequestedContextSourcesUsesMavenRepoLocalSystemProperty() throws Exception {
+        Path projectRoot = tempDir.resolve("workspace");
+        Path cutPath = writeSource(
+                projectRoot,
+                "src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path customMavenRepo = tempDir.resolve("custom-maven-repo");
+        writeSourceJarEntry(
+                customMavenRepo.resolve("com/google/guava/guava/33.2.1/abc123/guava-33.2.1-sources.jar"),
+                "com/google/common/base/Strings.java",
+                """
+                package com.google.common.base;
+
+                public final class Strings {
+                }
+                """
+        );
+
+        String previousMavenRepoLocal = System.getProperty("maven.repo.local");
+        try {
+            System.setProperty("maven.repo.local", customMavenRepo.toString());
+            ProjectFileService defaultFileService = new ProjectFileService();
+            List<String> contextSources = defaultFileService.readRequestedContextSources(
+                    projectRoot,
+                    cutPath,
+                    List.of("com.google.common.base.Strings")
+            );
+
+            assertEquals(1, contextSources.size());
+            assertTrue(contextSources.get(0).contains("package com.google.common.base;"));
+            assertTrue(contextSources.get(0).contains("class Strings"));
+        } finally {
+            if (previousMavenRepoLocal == null) {
+                System.clearProperty("maven.repo.local");
+            } else {
+                System.setProperty("maven.repo.local", previousMavenRepoLocal);
+            }
+        }
+    }
+
+    @Test
+    void readRequestedContextSourcesUsesMavenSettingsLocalRepository() throws Exception {
+        Path projectRoot = tempDir.resolve("workspace");
+        Path cutPath = writeSource(
+                projectRoot,
+                "src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path fakeHome = tempDir.resolve("fake-home");
+        Path settingsPath = fakeHome.resolve(".m2").resolve("settings.xml");
+        Path settingsMavenRepo = fakeHome.resolve("custom-settings-repo");
+        writeSourceJarEntry(
+                settingsMavenRepo.resolve("com/google/guava/guava/33.2.1/abc123/guava-33.2.1-sources.jar"),
+                "com/google/common/base/Strings.java",
+                """
+                package com.google.common.base;
+
+                public final class Strings {
+                }
+                """
+        );
+        Files.createDirectories(settingsPath.getParent());
+        Files.writeString(
+                settingsPath,
+                """
+                <settings>
+                  <localRepository>${user.home}/custom-settings-repo</localRepository>
+                </settings>
+                """
+        );
+
+        String previousUserHome = System.getProperty("user.home");
+        String previousMavenRepoLocal = System.getProperty("maven.repo.local");
+        try {
+            System.setProperty("user.home", fakeHome.toString());
+            System.clearProperty("maven.repo.local");
+
+            ProjectFileService defaultFileService = new ProjectFileService();
+            List<String> contextSources = defaultFileService.readRequestedContextSources(
+                    projectRoot,
+                    cutPath,
+                    List.of("com.google.common.base.Strings")
+            );
+
+            assertEquals(1, contextSources.size());
+            assertTrue(contextSources.get(0).contains("package com.google.common.base;"));
+            assertTrue(contextSources.get(0).contains("class Strings"));
+        } finally {
+            if (previousUserHome == null) {
+                System.clearProperty("user.home");
+            } else {
+                System.setProperty("user.home", previousUserHome);
+            }
+            if (previousMavenRepoLocal == null) {
+                System.clearProperty("maven.repo.local");
+            } else {
+                System.setProperty("maven.repo.local", previousMavenRepoLocal);
+            }
+        }
+    }
+
+    @Test
     void readRequestedContextSourcesPrefersProjectSourcesOverTargetDirectory() throws Exception {
         Path projectRoot = tempDir.resolve("workspace");
         writeSource(

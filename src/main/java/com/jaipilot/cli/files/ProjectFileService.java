@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -37,6 +39,9 @@ public final class ProjectFileService {
     private static final List<String> SOURCE_JAR_SUFFIXES = List.of(
             "-sources.jar",
             "-source.jar"
+    );
+    private static final Pattern MAVEN_LOCAL_REPOSITORY_PATTERN = Pattern.compile(
+            "(?is)<localRepository>\\s*([^<]+?)\\s*</localRepository>"
     );
     private static final Set<String> SKIPPED_SEARCH_DIRECTORY_NAMES = Set.of(
             ".git",
@@ -267,6 +272,12 @@ public final class ProjectFileService {
             resolveImportedContextClassPath(projectRoot, sourcePath, importTarget).ifPresent(resolvedPaths::add);
         }
         return List.copyOf(resolvedPaths);
+    }
+
+    public void refreshDependencySourceIndex() {
+        dependencySourceContentCache.clear();
+        missingDependencySourcePaths.clear();
+        dependencySourceJars = null;
     }
 
     public String stripJavaExtension(String fileName) {
@@ -836,10 +847,16 @@ public final class ProjectFileService {
 
         Path homePath = Path.of(userHome);
         List<Path> roots = new ArrayList<>();
-        String m2Repo = System.getenv("M2_REPO");
-        roots.add(m2Repo == null || m2Repo.isBlank()
-                ? homePath.resolve(".m2").resolve("repository")
-                : Path.of(m2Repo));
+        String explicitMavenRepo = firstNonBlank(
+                System.getProperty("maven.repo.local"),
+                System.getenv("MAVEN_REPO_LOCAL"),
+                System.getenv("M2_REPO")
+        );
+        if (explicitMavenRepo != null) {
+            roots.add(resolveConfiguredPath(homePath, explicitMavenRepo));
+        }
+        mavenLocalRepositoryFromSettings(homePath).ifPresent(roots::add);
+        roots.add(homePath.resolve(".m2").resolve("repository"));
 
         String gradleHome = firstNonBlank(System.getenv("GRADLE_USER_HOME"), System.getenv("GRADLE_HOME"));
         Path gradleBasePath = gradleHome == null
@@ -852,12 +869,60 @@ public final class ProjectFileService {
                 .toList();
     }
 
-    private static String firstNonBlank(String primary, String fallback) {
-        if (primary != null && !primary.isBlank()) {
-            return primary;
+    private static Optional<Path> mavenLocalRepositoryFromSettings(Path homePath) {
+        Path settingsPath = homePath.resolve(".m2").resolve("settings.xml");
+        if (!Files.isRegularFile(settingsPath)) {
+            return Optional.empty();
         }
-        if (fallback != null && !fallback.isBlank()) {
-            return fallback;
+        try {
+            String content = Files.readString(settingsPath, StandardCharsets.UTF_8);
+            Matcher matcher = MAVEN_LOCAL_REPOSITORY_PATTERN.matcher(content);
+            if (!matcher.find()) {
+                return Optional.empty();
+            }
+            return Optional.of(resolveConfiguredPath(homePath, matcher.group(1)));
+        } catch (Exception ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private static Path resolveConfiguredPath(Path homePath, String configuredPath) {
+        String normalized = configuredPath == null ? "" : configuredPath.trim();
+        if (normalized.isBlank()) {
+            return homePath.resolve(".m2").resolve("repository").normalize();
+        }
+
+        String userHome = homePath.toString();
+        normalized = normalized.replace("${user.home}", userHome);
+        String envHome = System.getenv("HOME");
+        if (envHome != null && !envHome.isBlank()) {
+            normalized = normalized.replace("${env.HOME}", envHome);
+        } else {
+            normalized = normalized.replace("${env.HOME}", userHome);
+        }
+        if (normalized.startsWith("~")) {
+            normalized = userHome + normalized.substring(1);
+        }
+
+        Path path = Path.of(normalized);
+        if (!path.isAbsolute()) {
+            path = homePath.resolve(path);
+        }
+        return path.normalize();
+    }
+
+    private static String firstNonBlank(String primary, String fallback) {
+        return firstNonBlank(new String[] {primary, fallback});
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
         }
         return null;
     }

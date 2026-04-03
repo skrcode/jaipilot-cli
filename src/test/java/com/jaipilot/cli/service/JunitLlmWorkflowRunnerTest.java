@@ -22,7 +22,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -1208,6 +1210,216 @@ class JunitLlmWorkflowRunnerTest {
         )));
     }
 
+    @Test
+    void runRetriesMissingContextEvenWhenPreflightDependencyDownloadSucceeded() throws Exception {
+        Path projectRoot = tempDir.resolve("project-with-missing-context-preflight-success");
+        write(projectRoot.resolve("pom.xml"), "<project/>");
+        Path cutPath = write(
+                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
+        Path fakeMaven = writeFakeMavenThatDownloadsDependencySourcesOnSecondAttempt(projectRoot);
+
+        JunitLlmBackendClient backendClient = new JunitLlmBackendClient() {
+            private int invokeCount;
+
+            @Override
+            public InvokeJunitLlmResponse invoke(InvokeJunitLlmRequest request) {
+                invokeCount++;
+                return new InvokeJunitLlmResponse("job-" + invokeCount, "session-1");
+            }
+
+            @Override
+            public FetchJobResponse fetchJob(String jobId) {
+                if ("job-1".equals(jobId)) {
+                    return new FetchJobResponse(
+                            "done",
+                            new FetchJobResponse.FetchJobOutput(
+                                    "session-1",
+                                    """
+                                    package com.example;
+
+                                    class CrashControllerTest {
+                                    }
+                                    """,
+                                    List.of("org/acme/jaipilot/workflowretry/DownloadedContextForWorkflowRetry.java"),
+                                    List.of()
+                            ),
+                            null,
+                            null
+                    );
+                }
+                return new FetchJobResponse(
+                        "done",
+                        new FetchJobResponse.FetchJobOutput(
+                                "session-1",
+                                """
+                                package com.example;
+
+                                class CrashControllerTest {
+                                }
+                                """,
+                                List.of(),
+                                List.of()
+                        ),
+                        null,
+                        null
+                );
+            }
+        };
+
+        ProjectFileService fileService = new ProjectFileService();
+        JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
+                backendClient,
+                fileService,
+                new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json")),
+                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter()))
+        );
+        JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
+                sessionRunner,
+                new MavenCommandBuilder(),
+                new GradleCommandBuilder(),
+                new ProcessExecutor(),
+                fileService
+        );
+
+        JunitLlmSessionResult result = workflowRunner.run(
+                new JunitLlmSessionRequest(
+                        projectRoot,
+                        cutPath,
+                        outputPath,
+                        JunitLlmOperation.GENERATE,
+                        null,
+                        "",
+                        "",
+                        null
+                ),
+                fakeMaven,
+                List.of(),
+                Duration.ofSeconds(10)
+        );
+
+        assertEquals("session-1", result.sessionId());
+        List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
+        assertEquals(2, commandLog.stream().filter(line -> line.contains("dependency:sources")).count());
+        assertTrue(Files.isRegularFile(projectRoot.resolve(
+                "src/main/java/org/acme/jaipilot/workflowretry/DownloadedContextForWorkflowRetry.java"
+        )));
+    }
+
+    @Test
+    void runRetriesMissingContextMoreThanOnceWhenDependencySourcesAppearLater() throws Exception {
+        Path projectRoot = tempDir.resolve("project-with-missing-context-multi-retry");
+        write(projectRoot.resolve("pom.xml"), "<project/>");
+        Path cutPath = write(
+                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
+        Path fakeMaven = writeFakeMavenThatDownloadsDependencySources(projectRoot, 3);
+
+        JunitLlmBackendClient backendClient = new JunitLlmBackendClient() {
+            private int invokeCount;
+            private final Map<String, Boolean> hasContextByJobId = new HashMap<>();
+
+            @Override
+            public InvokeJunitLlmResponse invoke(InvokeJunitLlmRequest request) {
+                invokeCount++;
+                String jobId = "job-" + invokeCount;
+                hasContextByJobId.put(jobId, request.contextClasses() != null && !request.contextClasses().isEmpty());
+                return new InvokeJunitLlmResponse(jobId, "session-1");
+            }
+
+            @Override
+            public FetchJobResponse fetchJob(String jobId) {
+                if (!hasContextByJobId.getOrDefault(jobId, false)) {
+                    return new FetchJobResponse(
+                            "done",
+                            new FetchJobResponse.FetchJobOutput(
+                                    "session-1",
+                                    """
+                                    package com.example;
+
+                                    class CrashControllerTest {
+                                    }
+                                    """,
+                                    List.of("org/acme/jaipilot/workflowretry/DownloadedContextForWorkflowRetry.java"),
+                                    List.of()
+                            ),
+                            null,
+                            null
+                    );
+                }
+
+                return new FetchJobResponse(
+                        "done",
+                        new FetchJobResponse.FetchJobOutput(
+                                "session-1",
+                                """
+                                package com.example;
+
+                                class CrashControllerTest {
+                                }
+                                """,
+                                List.of(),
+                                List.of()
+                        ),
+                        null,
+                        null
+                );
+            }
+        };
+
+        ProjectFileService fileService = new ProjectFileService();
+        JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
+                backendClient,
+                fileService,
+                new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json")),
+                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter()))
+        );
+        JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
+                sessionRunner,
+                new MavenCommandBuilder(),
+                new GradleCommandBuilder(),
+                new ProcessExecutor(),
+                fileService
+        );
+
+        JunitLlmSessionResult result = workflowRunner.run(
+                new JunitLlmSessionRequest(
+                        projectRoot,
+                        cutPath,
+                        outputPath,
+                        JunitLlmOperation.GENERATE,
+                        null,
+                        "",
+                        "",
+                        null
+                ),
+                fakeMaven,
+                List.of(),
+                Duration.ofSeconds(10)
+        );
+
+        assertEquals("session-1", result.sessionId());
+        List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
+        assertEquals(3, commandLog.stream().filter(line -> line.contains("dependency:sources")).count());
+        assertTrue(Files.isRegularFile(projectRoot.resolve(
+                "src/main/java/org/acme/jaipilot/workflowretry/DownloadedContextForWorkflowRetry.java"
+        )));
+    }
+
     private Path write(Path path, String content) throws Exception {
         Files.createDirectories(path.getParent());
         Files.writeString(path, content);
@@ -1641,6 +1853,14 @@ class JunitLlmWorkflowRunnerTest {
     }
 
     private Path writeFakeMavenThatDownloadsDependencySources(Path projectRoot) throws Exception {
+        return writeFakeMavenThatDownloadsDependencySources(projectRoot, 1);
+    }
+
+    private Path writeFakeMavenThatDownloadsDependencySourcesOnSecondAttempt(Path projectRoot) throws Exception {
+        return writeFakeMavenThatDownloadsDependencySources(projectRoot, 2);
+    }
+
+    private Path writeFakeMavenThatDownloadsDependencySources(Path projectRoot, int downloadOnAttempt) throws Exception {
         Path fakeMaven = projectRoot.resolve("mvnw");
         Files.createDirectories(projectRoot);
         write(
@@ -1652,16 +1872,26 @@ class JunitLlmWorkflowRunnerTest {
                 set -eu
 
                 printf '%s\\n' "$*" >> "$PWD/maven-commands.log"
+                DOWNLOAD_ON_ATTEMPT='__DOWNLOAD_ON_ATTEMPT__'
 
                 case "$*" in
                   *dependency:sources*)
-                    mkdir -p "$PWD/src/main/java/org/acme/jaipilot/workflowretry"
-                    cat > "$PWD/src/main/java/org/acme/jaipilot/workflowretry/DownloadedContextForWorkflowRetry.java" <<'EOF'
+                    ATTEMPT_FILE="$PWD/.dependency-sources-attempt"
+                    ATTEMPT="0"
+                    if [ -f "$ATTEMPT_FILE" ]; then
+                      ATTEMPT="$(cat "$ATTEMPT_FILE")"
+                    fi
+                    ATTEMPT=$((ATTEMPT + 1))
+                    echo "$ATTEMPT" > "$ATTEMPT_FILE"
+                    if [ "$ATTEMPT" -ge "$DOWNLOAD_ON_ATTEMPT" ]; then
+                      mkdir -p "$PWD/src/main/java/org/acme/jaipilot/workflowretry"
+                      cat > "$PWD/src/main/java/org/acme/jaipilot/workflowretry/DownloadedContextForWorkflowRetry.java" <<'EOF'
                 package org.acme.jaipilot.workflowretry;
 
                 public class DownloadedContextForWorkflowRetry {
                 }
                 EOF
+                    fi
                     echo "downloaded sources"
                     exit 0
                     ;;
@@ -1697,7 +1927,7 @@ class JunitLlmWorkflowRunnerTest {
                     exit 2
                     ;;
                 esac
-                """);
+                """.replace("__DOWNLOAD_ON_ATTEMPT__", Integer.toString(downloadOnAttempt)));
         boolean executable = fakeMaven.toFile().setExecutable(true);
         assertTrue(executable, "fake Maven script must be executable");
         return fakeMaven;
