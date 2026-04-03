@@ -18,8 +18,6 @@
     <a href="#quick-start"><strong>Quick Start</strong></a>
     ·
     <a href="#how-it-works"><strong>How It Works</strong></a>
-    ·
-    <a href="#development"><strong>Development</strong></a>
   </p>
 </div>
 
@@ -111,19 +109,6 @@ Pass extra build arguments when needed:
 jaipilot generate src/main/java/org/example/CrashController.java --build-arg -DskipITs
 ```
 
-## Agent Workflow
-
-1. Ask your agent to generate tests with `jaipilot generate`.
-2. Let JAIPilot run local compile/test validation and stream logs.
-3. If validation fails, JAIPilot sends build feedback back to the backend as a `fix` pass and retries.
-4. Repeat generation for other classes.
-
-Example prompt:
-
-```text
-Use `jaipilot generate` for the touched classes and keep iterating until local tests pass.
-```
-
 ## Commands
 
 Authentication commands:
@@ -136,12 +121,6 @@ Generation commands:
 
 - `jaipilot generate <path-to-class>` generates or updates a corresponding test file.
 
-Common options:
-
-- `JAIPILOT_JWT_TOKEN` can be used instead of a stored login session.
-- `--output` overrides the inferred test file path.
-- `--build-executable`, `--build-arg`, and `--timeout-seconds` control the local validation phase.
-
 ## How It Works
 
 `jaipilot generate` reads local source files, calls the backend generation API, polls for completion, writes the returned test file, and validates it with your build tool in three stages: compile, codebase rules, and targeted test execution (`test-compile`/`verify`/targeted `test` for Maven, `testClasses`/`check`/targeted `test --tests` for Gradle). Rule validation is run with full-suite test execution skipped because JAIPilot already runs targeted test validation separately.
@@ -149,46 +128,6 @@ Common options:
 If validation fails, JAIPilot automatically performs iterative fixing passes using build failure logs. When required context classes are missing from local sources, JAIPilot can trigger dependency source download and retry.
 
 For Maven wrapper usage, JAIPilot only uses wrapper scripts when `.mvn/wrapper/maven-wrapper.properties` exists; otherwise it falls back to system `mvn`/`mvn.cmd`.
-
-## Requirements
-
-- Java 17+
-- curl
-- A Maven or Gradle project
-- JUnit 4 or JUnit 5 tests
-- Maven available via `./mvnw` or `mvn`, or Gradle available via `./gradlew` or `gradle`
-- A JAIPilot login session or a valid `JAIPILOT_JWT_TOKEN` for backend-assisted generation
-
-## Development
-
-Build and test locally:
-
-```sh
-./mvnw -B test
-```
-
-Smoke-test the install path:
-
-```sh
-./scripts/smoke-test-install.sh
-```
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and pull request expectations.
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.
-
-## Proxy
-
-JAIPilot performs remote HTTP requests through system `curl`, so proxy/TLS behavior matches your local `curl` configuration.
-Common proxy variables:
-
-- `HTTPS_PROXY=http://proxy.example.com:8080`
-- `HTTP_PROXY=http://proxy.example.com:8080`
-- `NO_PROXY=127.0.0.1,localhost,.internal.example.com`
 
 ## License
 
