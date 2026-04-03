@@ -1,0 +1,10 @@
+package com.jaipilot.cli.classpath;
+
+public enum ResolutionFailureCategory {
+    UNSUPPORTED_BUILD_TOOL,
+    BUILD_TOOL_NOT_FOUND,
+    CLASSPATH_RESOLUTION_FAILED,
+    COMPILE_FALLBACK_FAILED,
+    CLASS_NOT_FOUND_ON_RESOLVED_CLASSPATH,
+    SOURCE_NOT_AVAILABLE
+}
