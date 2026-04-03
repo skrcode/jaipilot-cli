@@ -35,7 +35,7 @@ class UpdateCommandTest {
     void checkReportsLatestVersionAndExitCodeWhenUpdateIsAvailable() {
         StringWriter outBuffer = new StringWriter();
         UpdateService updateService = new UpdateService(
-                new StubReleaseClient("0.2.0"),
+                new StubReleaseClient("999.0.0"),
                 new UpdateSettingsStore(),
                 fixedClock(),
                 Optional::<InstallationLayout>empty
@@ -47,7 +47,7 @@ class UpdateCommandTest {
                 .execute("--check");
 
         assertEquals(1, exitCode);
-        assertTrue(outBuffer.toString().contains("Latest version: 0.2.0"));
+        assertTrue(outBuffer.toString().contains("Latest version: 999.0.0"));
         assertTrue(outBuffer.toString().contains("Status: update available"));
     }
 

@@ -15,24 +15,37 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String INVOKE_PATH = "/functions/v1/invoke-junit-llm-cli";
     private static final String FETCH_JOB_PATH = "/functions/v1/fetch-job-cli?id=";
+    private static final int MAX_RETRIES = 10;
+    private static final long INITIAL_RETRY_DELAY_MILLIS = 100L;
+    private static final long MAX_RETRY_DELAY_MILLIS = 2_000L;
+    private static final Set<Integer> RETRIABLE_HTTP_STATUS_CODES = Set.of(408, 425, 429);
+    private static final Set<Integer> RETRIABLE_CURL_EXIT_CODES = Set.of(5, 6, 7, 18, 28, 52, 55, 56, 92);
+
+    interface SleepStrategy {
+        void sleep(long millis) throws InterruptedException;
+    }
 
     private final CurlHttpClient curlHttpClient;
     private final ObjectMapper objectMapper;
     private final String backendUrl;
     private final String jwtToken;
+    private final SleepStrategy sleepStrategy;
 
     public HttpJunitLlmBackendClient(String backendUrl, String jwtToken) {
         this(
                 new CurlHttpClient(),
                 OBJECT_MAPPER,
                 backendUrl,
-                jwtToken
+                jwtToken,
+                Thread::sleep
         );
     }
 
@@ -42,28 +55,39 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
             String backendUrl,
             String jwtToken
     ) {
+        this(curlHttpClient, objectMapper, backendUrl, jwtToken, Thread::sleep);
+    }
+
+    HttpJunitLlmBackendClient(
+            CurlHttpClient curlHttpClient,
+            ObjectMapper objectMapper,
+            String backendUrl,
+            String jwtToken,
+            SleepStrategy sleepStrategy
+    ) {
         if (backendUrl == null || backendUrl.isBlank()) {
             throw new IllegalArgumentException("backendUrl is required");
         }
         if (jwtToken == null || jwtToken.isBlank()) {
             throw new IllegalArgumentException("jwtToken is required");
         }
-        this.curlHttpClient = curlHttpClient;
-        this.objectMapper = objectMapper;
+        this.curlHttpClient = Objects.requireNonNull(curlHttpClient, "curlHttpClient");
+        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.backendUrl = trimTrailingSlash(backendUrl);
         this.jwtToken = jwtToken.trim();
+        this.sleepStrategy = Objects.requireNonNull(sleepStrategy, "sleepStrategy");
     }
 
     @Override
     public InvokeJunitLlmResponse invoke(InvokeJunitLlmRequest request) throws IOException, InterruptedException {
-        String url = backendUrl + INVOKE_PATH;
+        URI uri = URI.create(backendUrl + INVOKE_PATH);
         String body = buildInvokeRequestBody(request);
 
         CurlHttpClient.CurlResponse response;
         try {
-            response = curlHttpClient.request(
+            response = requestWithRetries(
+                    uri,
                     "POST",
-                    URI.create(url),
                     Map.of(
                             "Accept", "application/json",
                             "Authorization", "Bearer " + jwtToken,
@@ -75,23 +99,22 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
         } catch (IOException exception) {
             throw JaipilotNetworkErrors.wrapIo(
                     "invoke the JAIPilot backend",
-                    URI.create(url),
+                    uri,
                     exception
             );
         }
-        ensureSuccessful(response);
         return objectMapper.readValue(response.body(), InvokeJunitLlmResponse.class);
     }
 
     @Override
     public FetchJobResponse fetchJob(String jobId) throws IOException, InterruptedException {
-        String url = backendUrl + FETCH_JOB_PATH + URLEncoder.encode(jobId, StandardCharsets.UTF_8);
+        URI uri = URI.create(backendUrl + FETCH_JOB_PATH + URLEncoder.encode(jobId, StandardCharsets.UTF_8));
 
         CurlHttpClient.CurlResponse response;
         try {
-            response = curlHttpClient.request(
+            response = requestWithRetries(
+                    uri,
                     "GET",
-                    URI.create(url),
                     Map.of(
                             "Accept", "application/json",
                             "Authorization", "Bearer " + jwtToken
@@ -102,12 +125,85 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
         } catch (IOException exception) {
             throw JaipilotNetworkErrors.wrapIo(
                     "poll the JAIPilot backend",
-                    URI.create(url),
+                    uri,
                     exception
             );
         }
-        ensureSuccessful(response);
         return parseFetchJobResponse(response.body());
+    }
+
+    private CurlHttpClient.CurlResponse requestWithRetries(
+            URI uri,
+            String method,
+            Map<String, String> headers,
+            String requestBody,
+            Duration timeout
+    ) throws IOException, InterruptedException {
+        for (int retry = 0; retry <= MAX_RETRIES; retry++) {
+            CurlHttpClient.CurlResponse response;
+            try {
+                response = curlHttpClient.request(method, uri, headers, requestBody, timeout);
+            } catch (IOException exception) {
+                if (!isRetriable(exception) || retry == MAX_RETRIES) {
+                    throw exception;
+                }
+                sleepBeforeRetry(retry + 1);
+                continue;
+            }
+
+            if (response.statusCode() / 100 == 2) {
+                return response;
+            }
+            if (isRetriableStatusCode(response.statusCode()) && retry < MAX_RETRIES) {
+                sleepBeforeRetry(retry + 1);
+                continue;
+            }
+            throw new IllegalStateException(extractErrorMessage(response.body()));
+        }
+
+        throw new IllegalStateException("Backend request failed after retries.");
+    }
+
+    private void sleepBeforeRetry(int retryAttempt) throws InterruptedException {
+        sleepStrategy.sleep(retryDelayMillis(retryAttempt));
+    }
+
+    private long retryDelayMillis(int retryAttempt) {
+        long delayMillis = INITIAL_RETRY_DELAY_MILLIS;
+        for (int index = 1; index < retryAttempt; index++) {
+            delayMillis = Math.min(delayMillis * 2L, MAX_RETRY_DELAY_MILLIS);
+        }
+        return delayMillis;
+    }
+
+    private boolean isRetriableStatusCode(int statusCode) {
+        return statusCode >= 500 || RETRIABLE_HTTP_STATUS_CODES.contains(statusCode);
+    }
+
+    private boolean isRetriable(IOException exception) {
+        CurlHttpClient.CurlException curlException = findCause(exception, CurlHttpClient.CurlException.class);
+        if (curlException == null) {
+            return true;
+        }
+        return switch (curlException.kind()) {
+            case TIMEOUT -> true;
+            case EXECUTION -> {
+                Integer exitCode = curlException.exitCode();
+                yield exitCode == null || RETRIABLE_CURL_EXIT_CODES.contains(exitCode);
+            }
+            case MISSING_CURL, INVALID_RESPONSE -> false;
+        };
+    }
+
+    private <T extends Throwable> T findCause(Throwable failure, Class<T> type) {
+        Throwable current = failure;
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return type.cast(current);
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     private FetchJobResponse parseFetchJobResponse(String body) throws IOException {
@@ -153,13 +249,6 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
         putString(root, "newTestClassCode", request.newTestClassCode());
         putNullableString(root, "clientLogs", request.clientLogs());
         return objectMapper.writeValueAsString(root);
-    }
-
-    private void ensureSuccessful(CurlHttpClient.CurlResponse response) {
-        if (response.statusCode() / 100 == 2) {
-            return;
-        }
-        throw new IllegalStateException(extractErrorMessage(response.body()));
     }
 
     private static String trimTrailingSlash(String value) {

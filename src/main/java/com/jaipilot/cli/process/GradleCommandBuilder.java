@@ -57,6 +57,28 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
         return command;
     }
 
+    @Override
+    public List<String> buildCodebaseRulesValidation(
+            Path projectRoot,
+            Path explicitGradleExecutable,
+            List<String> additionalArguments
+    ) {
+        return buildCodebaseRulesValidation(projectRoot, explicitGradleExecutable, additionalArguments, "");
+    }
+
+    public List<String> buildCodebaseRulesValidation(
+            Path projectRoot,
+            Path explicitGradleExecutable,
+            List<String> additionalArguments,
+            String gradleProjectPath
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitGradleExecutable, additionalArguments);
+        command.add(qualifyTask(gradleProjectPath, "check"));
+        command.add("-x");
+        command.add(qualifyTask(gradleProjectPath, "test"));
+        return command;
+    }
+
     public List<String> buildDependencySourcesDownload(
             Path projectRoot,
             Path explicitGradleExecutable,
@@ -67,6 +89,24 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
         command.add("-I");
         command.add(initScriptPath.toString());
         command.add("jaipilotDownloadSources");
+        return command;
+    }
+
+    public List<String> buildSingleTestCoverage(
+            Path projectRoot,
+            Path explicitGradleExecutable,
+            List<String> additionalArguments,
+            String testSelector,
+            String gradleProjectPath,
+            Path initScriptPath
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitGradleExecutable, additionalArguments);
+        command.add("-I");
+        command.add(initScriptPath.toString());
+        command.add(qualifyTask(gradleProjectPath, "test"));
+        command.add("--tests");
+        command.add(testSelector);
+        command.add(qualifyTask(gradleProjectPath, "jacocoTestReport"));
         return command;
     }
 

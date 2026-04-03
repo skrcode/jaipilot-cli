@@ -4,9 +4,12 @@ import com.jaipilot.cli.process.BuildTool;
 import com.jaipilot.cli.util.JavaSourceFormatter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.FileVisitResult;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -34,6 +37,16 @@ public final class ProjectFileService {
     private static final List<String> SOURCE_JAR_SUFFIXES = List.of(
             "-sources.jar",
             "-source.jar"
+    );
+    private static final Set<String> SKIPPED_SEARCH_DIRECTORY_NAMES = Set.of(
+            ".git",
+            ".gradle",
+            ".idea",
+            ".vscode",
+            "target",
+            "build",
+            "out",
+            "node_modules"
     );
 
     private final List<Path> dependencySourceSearchRoots;
@@ -285,11 +298,10 @@ public final class ProjectFileService {
         }
 
         String normalizedSuffix = normalizeSuffix(requestedPath);
-        try (var paths = Files.walk(projectRoot)) {
-            return paths
-                    .filter(Files::isRegularFile)
-                    .sorted(preferredPathComparator(projectRoot, preferredSourcePath, normalizedSuffix))
+        try {
+            return collectProjectJavaSources(projectRoot).stream()
                     .filter(path -> matchesRequestedSuffix(projectRoot, path, normalizedSuffix))
+                    .sorted(preferredPathComparator(projectRoot, preferredSourcePath, normalizedSuffix))
                     .findFirst()
                     .map(Path::normalize);
         } catch (IOException exception) {
@@ -327,8 +339,6 @@ public final class ProjectFileService {
 
     private List<String> resolveWildcardImportPaths(Path projectRoot, String packageName) {
         String packagePath = packageName.replace('.', '/');
-        String mainSuffix = "/src/main/java/" + packagePath;
-        String testSuffix = "/src/test/java/" + packagePath;
         Set<String> resolvedPaths = new LinkedHashSet<>();
 
         for (Path sourceRoot : JAVA_SOURCE_ROOTS) {
@@ -338,13 +348,10 @@ public final class ProjectFileService {
             }
         }
 
-        try (var paths = Files.walk(projectRoot)) {
-            paths.filter(Files::isDirectory)
-                    .filter(path -> {
-                        String normalizedPath = normalizeSeparators(path);
-                        return normalizedPath.endsWith(mainSuffix) || normalizedPath.endsWith(testSuffix);
-                    })
-                    .forEach(path -> resolvedPaths.addAll(readPackageJavaFiles(projectRoot, path)));
+        try {
+            for (Path packageDirectory : collectPackageDirectories(projectRoot, packagePath)) {
+                resolvedPaths.addAll(readPackageJavaFiles(projectRoot, packageDirectory));
+            }
         } catch (IOException exception) {
             throw new IllegalStateException("Unable to search wildcard import package " + packageName, exception);
         }
@@ -529,6 +536,96 @@ public final class ProjectFileService {
             return true;
         }
         return relativePath.endsWith("/" + normalizedSuffix);
+    }
+
+    private List<Path> collectProjectJavaSources(Path projectRoot) throws IOException {
+        List<Path> sources = new ArrayList<>();
+        Files.walkFileTree(projectRoot, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                if (shouldSkipDirectory(projectRoot, dir)) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                if (isProjectJavaSource(projectRoot, file)) {
+                    sources.add(file.normalize());
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return sources;
+    }
+
+    private List<Path> collectPackageDirectories(Path projectRoot, String packagePath) throws IOException {
+        List<Path> directories = new ArrayList<>();
+        String mainSuffix = "/src/main/java/" + packagePath;
+        String testSuffix = "/src/test/java/" + packagePath;
+        Files.walkFileTree(projectRoot, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                if (shouldSkipDirectory(projectRoot, dir)) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                if (isSourcePackageDirectory(projectRoot, dir, mainSuffix, testSuffix)) {
+                    directories.add(dir.normalize());
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return directories;
+    }
+
+    private boolean shouldSkipDirectory(Path projectRoot, Path directory) {
+        Path normalizedRoot = projectRoot.normalize();
+        Path normalizedDirectory = directory.normalize();
+        if (normalizedDirectory.equals(normalizedRoot)) {
+            return false;
+        }
+        Path fileName = normalizedDirectory.getFileName();
+        if (fileName == null) {
+            return false;
+        }
+        return SKIPPED_SEARCH_DIRECTORY_NAMES.contains(fileName.toString());
+    }
+
+    private boolean isProjectJavaSource(Path projectRoot, Path path) {
+        if (!Files.isRegularFile(path) || path.getFileName() == null || !path.getFileName().toString().endsWith(".java")) {
+            return false;
+        }
+        Path normalizedRoot = projectRoot.normalize();
+        Path normalizedPath = path.normalize();
+        if (!normalizedPath.startsWith(normalizedRoot)) {
+            return false;
+        }
+        String relativePath = normalizeSeparators(normalizedRoot.relativize(normalizedPath));
+        return isSourcePath(relativePath);
+    }
+
+    private boolean isSourcePackageDirectory(Path projectRoot, Path directory, String mainSuffix, String testSuffix) {
+        Path normalizedRoot = projectRoot.normalize();
+        Path normalizedDirectory = directory.normalize();
+        if (!normalizedDirectory.startsWith(normalizedRoot)) {
+            return false;
+        }
+        String relativePath = normalizeSeparators(normalizedRoot.relativize(normalizedDirectory));
+        if (!isSourcePath(relativePath)) {
+            return false;
+        }
+        String normalizedPath = "/" + relativePath;
+        return normalizedPath.endsWith(mainSuffix) || normalizedPath.endsWith(testSuffix);
+    }
+
+    private boolean isSourcePath(String normalizedRelativePath) {
+        return normalizedRelativePath.equals("src/main/java")
+                || normalizedRelativePath.equals("src/test/java")
+                || normalizedRelativePath.startsWith("src/main/java/")
+                || normalizedRelativePath.startsWith("src/test/java/")
+                || normalizedRelativePath.contains("/src/main/java/")
+                || normalizedRelativePath.contains("/src/test/java/");
     }
 
     private String normalizeSuffix(String requestedPath) {

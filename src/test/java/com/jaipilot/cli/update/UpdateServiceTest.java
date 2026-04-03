@@ -76,7 +76,7 @@ class UpdateServiceTest {
         Path settingsPath = tempDir.resolve("config/update-settings.json");
         UpdateSettingsStore settingsStore = new UpdateSettingsStore(settingsPath);
         UpdateService updateService = new UpdateService(
-                new FakeReleaseClient("0.2.0", tempDir.resolve("archive.tar.gz").toUri(), tempDir.resolve("archive.tar.gz.sha256").toUri()),
+                new FakeReleaseClient("999.0.0", tempDir.resolve("archive.tar.gz").toUri(), tempDir.resolve("archive.tar.gz.sha256").toUri()),
                 settingsStore,
                 fixedClock(),
                 Optional::<InstallationLayout>empty

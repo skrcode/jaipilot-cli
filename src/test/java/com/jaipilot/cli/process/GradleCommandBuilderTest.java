@@ -60,6 +60,23 @@ class GradleCommandBuilderTest {
     }
 
     @Test
+    void buildsCodebaseRulesValidationCommand() {
+        List<String> command = commandBuilder.buildCodebaseRulesValidation(
+                Path.of("/tmp/project"),
+                Path.of("custom-gradle"),
+                List.of("--stacktrace")
+        );
+
+        assertEquals("custom-gradle", command.get(0));
+        assertTrue(command.contains("--no-daemon"));
+        assertTrue(command.contains("--console=plain"));
+        assertTrue(command.contains("--stacktrace"));
+        assertTrue(command.contains("check"));
+        assertTrue(command.contains("-x"));
+        assertTrue(command.contains("test"));
+    }
+
+    @Test
     void buildsModuleScopedSingleTestExecutionCommand() {
         List<String> command = commandBuilder.buildSingleTestExecution(
                 Path.of("/tmp/project"),
@@ -71,6 +88,20 @@ class GradleCommandBuilderTest {
 
         assertTrue(command.contains(":clients:test"));
         assertTrue(command.contains("com.example.CrashControllerTest"));
+    }
+
+    @Test
+    void buildsModuleScopedCodebaseRulesValidationCommand() {
+        List<String> command = commandBuilder.buildCodebaseRulesValidation(
+                Path.of("/tmp/project"),
+                Path.of("custom-gradle"),
+                List.of("--stacktrace"),
+                ":clients"
+        );
+
+        assertTrue(command.contains(":clients:check"));
+        assertTrue(command.contains("-x"));
+        assertTrue(command.contains(":clients:test"));
     }
 
     @Test
@@ -89,6 +120,29 @@ class GradleCommandBuilderTest {
         assertTrue(command.contains("-I"));
         assertTrue(command.contains("/tmp/jaipilot-init.gradle"));
         assertTrue(command.contains("jaipilotDownloadSources"));
+    }
+
+    @Test
+    void buildsSingleTestCoverageCommand() {
+        List<String> command = commandBuilder.buildSingleTestCoverage(
+                Path.of("/tmp/project"),
+                Path.of("custom-gradle"),
+                List.of("--stacktrace"),
+                "com.example.CrashControllerTest",
+                ":clients",
+                Path.of("/tmp/jaipilot-jacoco-init.gradle")
+        );
+
+        assertEquals("custom-gradle", command.get(0));
+        assertTrue(command.contains("--no-daemon"));
+        assertTrue(command.contains("--console=plain"));
+        assertTrue(command.contains("--stacktrace"));
+        assertTrue(command.contains("-I"));
+        assertTrue(command.contains("/tmp/jaipilot-jacoco-init.gradle"));
+        assertTrue(command.contains(":clients:test"));
+        assertTrue(command.contains("--tests"));
+        assertTrue(command.contains("com.example.CrashControllerTest"));
+        assertTrue(command.contains(":clients:jacocoTestReport"));
     }
 
     @Test

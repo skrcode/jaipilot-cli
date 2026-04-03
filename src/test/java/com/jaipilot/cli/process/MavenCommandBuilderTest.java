@@ -50,6 +50,22 @@ class MavenCommandBuilderTest {
     }
 
     @Test
+    void buildsCodebaseRulesValidationCommand() {
+        List<String> command = commandBuilder.buildCodebaseRulesValidation(
+                Path.of("/tmp/project"),
+                Path.of("custom-mvn"),
+                List.of("-DskipITs")
+        );
+
+        assertEquals("custom-mvn", command.get(0));
+        assertTrue(command.contains("-B"));
+        assertTrue(command.contains("-ntp"));
+        assertTrue(command.contains("-DskipITs"));
+        assertTrue(command.contains("-DskipTests"));
+        assertTrue(command.contains("verify"));
+    }
+
+    @Test
     void buildsDependencySourcesDownloadCommand() {
         List<String> command = commandBuilder.buildDependencySourcesDownload(
                 Path.of("/tmp/project"),
@@ -63,6 +79,25 @@ class MavenCommandBuilderTest {
         assertTrue(command.contains("-DskipITs"));
         assertTrue(command.contains("-DskipTests"));
         assertTrue(command.contains("dependency:sources"));
+    }
+
+    @Test
+    void buildsSingleTestCoverageCommand() {
+        List<String> command = commandBuilder.buildSingleTestCoverage(
+                Path.of("/tmp/project"),
+                Path.of("custom-mvn"),
+                List.of("-DskipITs"),
+                "com.example.CrashControllerTest"
+        );
+
+        assertEquals("custom-mvn", command.get(0));
+        assertTrue(command.contains("-B"));
+        assertTrue(command.contains("-ntp"));
+        assertTrue(command.contains("-DskipITs"));
+        assertTrue(command.contains("-Dtest=com.example.CrashControllerTest"));
+        assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.12:prepare-agent"));
+        assertTrue(command.contains("test"));
+        assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.12:report"));
     }
 
     @Test

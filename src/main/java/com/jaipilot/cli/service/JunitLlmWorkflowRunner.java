@@ -10,6 +10,7 @@ import com.jaipilot.cli.process.GradleCommandBuilder;
 import com.jaipilot.cli.process.MavenCommandBuilder;
 import com.jaipilot.cli.process.ProcessExecutor;
 import com.jaipilot.cli.util.SensitiveDataRedactor;
+import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
@@ -20,11 +21,17 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 public final class JunitLlmWorkflowRunner {
 
     private static final PrintWriter QUIET_WRITER = new PrintWriter(Writer.nullWriter());
     private static final int MAX_FIX_ATTEMPTS = 20;
+    private static final int MAX_COVERAGE_FIX_ATTEMPTS = 6;
+    private static final double TARGET_LINE_COVERAGE = 0.80d;
 
     private static final String GRADLE_DEPENDENCY_SOURCES_INIT_SCRIPT = """
             gradle.rootProject {
@@ -56,6 +63,22 @@ public final class JunitLlmWorkflowRunner {
                             }
                         }
                         println("JAIPilot source download attempted for " + sourceNotations.size() + " dependencies.");
+                    }
+                }
+            }
+            """;
+
+    private static final String GRADLE_JACOCO_INIT_SCRIPT = """
+            import org.gradle.testing.jacoco.tasks.JacocoReport
+
+            allprojects { project ->
+                project.plugins.withId("java") {
+                    project.pluginManager.apply("jacoco")
+                    project.tasks.withType(JacocoReport).configureEach { task ->
+                        task.reports { reports ->
+                            reports.xml.required = true
+                            reports.html.required = true
+                        }
                     }
                 }
             }
@@ -126,6 +149,20 @@ public final class JunitLlmWorkflowRunner {
             throw new IllegalStateException(preflightFailureMessage(preflightFailure));
         }
 
+        boolean initialDependencySourcesDownloadSuccessful = tryDownloadDependencySources(
+                buildTool,
+                initialRequest.projectRoot(),
+                buildExecutable,
+                additionalBuildArgs,
+                timeout
+        );
+        dependencySourceDownloadAttempted = initialDependencySourcesDownloadSuccessful;
+        if (initialDependencySourcesDownloadSuccessful) {
+            progress("Dependency sources were downloaded during preflight.");
+        } else {
+            progress("Dependency source download during preflight did not complete; on-demand retry is enabled.");
+        }
+
         JunitLlmSessionResult latestSessionResult = runSessionWithDependencySourceRetry(
                 initialRequest,
                 buildTool,
@@ -134,53 +171,25 @@ public final class JunitLlmWorkflowRunner {
                 timeout
         );
 
-        ValidationFailure validationFailure = validateLocalBuild(
+        ValidationPassResult validationResult = fixUntilValidationPasses(
+                initialRequest,
+                latestSessionResult,
                 buildTool,
-                initialRequest.projectRoot(),
-                latestSessionResult.outputPath(),
                 buildExecutable,
                 additionalBuildArgs,
-                timeout
+                timeout,
+                normalizeTestCode(initialRequest.initialTestClassCode())
         );
-        if (validationFailure == null) {
-            return latestSessionResult;
-        }
-
-        int fixAttempt = 0;
-        while (validationFailure != null && fixAttempt < MAX_FIX_ATTEMPTS) {
-            fixAttempt++;
-            String latestTestCode = fileService.readFile(latestSessionResult.outputPath());
-            JunitLlmSessionRequest fixRequest = new JunitLlmSessionRequest(
-                    initialRequest.projectRoot(),
-                    initialRequest.cutPath(),
-                    latestSessionResult.outputPath(),
-                    JunitLlmOperation.FIX,
-                    latestSessionResult.sessionId(),
-                    latestTestCode,
-                    latestTestCode,
-                    buildFixClientLogs(validationFailure)
-            );
-            latestSessionResult = runSessionWithDependencySourceRetry(
-                    fixRequest,
-                    buildTool,
-                    buildExecutable,
-                    additionalBuildArgs,
-                    timeout
-            );
-            validationFailure = validateLocalBuild(
-                    buildTool,
-                    initialRequest.projectRoot(),
-                    latestSessionResult.outputPath(),
-                    buildExecutable,
-                    additionalBuildArgs,
-                    timeout
-            );
-        }
-
-        if (validationFailure == null) {
-            return latestSessionResult;
-        }
-        throw new IllegalStateException(localValidationFailureMessage(validationFailure));
+        return maximizeCoverage(
+                initialRequest,
+                validationResult.sessionResult(),
+                buildTool,
+                buildExecutable,
+                additionalBuildArgs,
+                timeout,
+                validationResult.lastBuiltTestCode(),
+                validationResult.buildExecuted()
+        );
     }
 
     private ValidationFailure validateProjectBeforeStarting(
@@ -191,7 +200,7 @@ public final class JunitLlmWorkflowRunner {
             List<String> additionalBuildArgs,
             Duration timeout
     ) throws Exception {
-        return withTargetFileExcluded(outputPath, () -> validateCompilationOnly(
+        return withTargetFileExcluded(outputPath, () -> validatePreflightBuild(
                 buildTool,
                 projectRoot,
                 outputPath,
@@ -201,7 +210,7 @@ public final class JunitLlmWorkflowRunner {
         ));
     }
 
-    private ValidationFailure validateCompilationOnly(
+    private ValidationFailure validatePreflightBuild(
             BuildTool buildTool,
             Path projectRoot,
             Path outputPath,
@@ -221,6 +230,27 @@ public final class JunitLlmWorkflowRunner {
                     "JAIPilot excluded the target test file before running this compile. The remaining failure is unrelated to the generated test."
             );
         }
+
+        ExecutionResult codebaseRulesResult = executeBuildCommand(
+                buildCodebaseRulesValidationCommand(
+                        buildTool,
+                        projectRoot,
+                        outputPath,
+                        buildExecutable,
+                        additionalBuildArgs
+                ),
+                projectRoot,
+                timeout
+        );
+        if (!isSuccessful(codebaseRulesResult)) {
+            return new ValidationFailure(
+                    "preflight-codebase-rules",
+                    codebaseRulesResult,
+                    "JAIPilot excluded the target test file before running project codebase rules validation. "
+                            + "The remaining failure is unrelated to the generated test."
+            );
+        }
+
         return null;
     }
 
@@ -244,6 +274,21 @@ public final class JunitLlmWorkflowRunner {
             return new ValidationFailure("test-compile", compileResult, null);
         }
 
+        ExecutionResult codebaseRulesResult = executeBuildCommand(
+                buildCodebaseRulesValidationCommand(
+                        buildTool,
+                        projectRoot,
+                        outputPath,
+                        buildExecutable,
+                        additionalBuildArgs
+                ),
+                projectRoot,
+                timeout
+        );
+        if (!isSuccessful(codebaseRulesResult)) {
+            return new ValidationFailure("codebase-rules", codebaseRulesResult, null);
+        }
+
         ExecutionResult testResult = executeBuildCommand(
                 buildSingleTestExecutionCommand(
                         buildTool,
@@ -263,17 +308,191 @@ public final class JunitLlmWorkflowRunner {
         return null;
     }
 
+    private ValidationPassResult fixUntilValidationPasses(
+            JunitLlmSessionRequest initialRequest,
+            JunitLlmSessionResult latestSessionResult,
+            BuildTool buildTool,
+            Path buildExecutable,
+            List<String> additionalBuildArgs,
+            Duration timeout,
+            String lastBuiltTestCode
+    ) throws Exception {
+        String currentTestCode = readTestCode(latestSessionResult.outputPath());
+        String latestBuiltTestCode = normalizeTestCode(lastBuiltTestCode);
+        boolean buildExecuted = false;
+
+        ValidationFailure validationFailure = null;
+        if (hasTestCodeChanged(latestBuiltTestCode, currentTestCode)) {
+            validationFailure = validateLocalBuild(
+                    buildTool,
+                    initialRequest.projectRoot(),
+                    latestSessionResult.outputPath(),
+                    buildExecutable,
+                    additionalBuildArgs,
+                    timeout
+            );
+            latestBuiltTestCode = currentTestCode;
+            buildExecuted = true;
+        } else {
+            progress("Skipping validation build because test file is unchanged.");
+            return new ValidationPassResult(latestSessionResult, latestBuiltTestCode, false);
+        }
+
+        if (validationFailure == null) {
+            return new ValidationPassResult(latestSessionResult, latestBuiltTestCode, buildExecuted);
+        }
+
+        int fixAttempt = 0;
+        while (validationFailure != null && fixAttempt < MAX_FIX_ATTEMPTS) {
+            fixAttempt++;
+            String latestTestCode = fileService.readFile(latestSessionResult.outputPath());
+            JunitLlmSessionRequest fixRequest = new JunitLlmSessionRequest(
+                    initialRequest.projectRoot(),
+                    initialRequest.cutPath(),
+                    latestSessionResult.outputPath(),
+                    JunitLlmOperation.FIX,
+                    latestSessionResult.sessionId(),
+                    latestTestCode,
+                    latestTestCode,
+                    buildFixClientLogs(validationFailure)
+            );
+            latestSessionResult = runSessionWithDependencySourceRetry(
+                    fixRequest,
+                    buildTool,
+                    buildExecutable,
+                    additionalBuildArgs,
+                    timeout
+            );
+            currentTestCode = readTestCode(latestSessionResult.outputPath());
+            if (!hasTestCodeChanged(latestBuiltTestCode, currentTestCode)) {
+                progress("Skipping validation build after fix attempt " + fixAttempt + " because test file is unchanged.");
+                continue;
+            }
+            validationFailure = validateLocalBuild(
+                    buildTool,
+                    initialRequest.projectRoot(),
+                    latestSessionResult.outputPath(),
+                    buildExecutable,
+                    additionalBuildArgs,
+                    timeout
+            );
+            latestBuiltTestCode = currentTestCode;
+            buildExecuted = true;
+        }
+
+        if (validationFailure != null) {
+            throw new IllegalStateException(localValidationFailureMessage(validationFailure));
+        }
+        return new ValidationPassResult(latestSessionResult, latestBuiltTestCode, buildExecuted);
+    }
+
+    private JunitLlmSessionResult maximizeCoverage(
+            JunitLlmSessionRequest initialRequest,
+            JunitLlmSessionResult latestSessionResult,
+            BuildTool buildTool,
+            Path buildExecutable,
+            List<String> additionalBuildArgs,
+            Duration timeout,
+            String lastBuiltTestCode,
+            boolean validationBuildExecuted
+    ) throws Exception {
+        if (!validationBuildExecuted) {
+            progress("Skipping coverage build because test file is unchanged.");
+            return latestSessionResult;
+        }
+
+        progress("Maximizing coverage...");
+        progress("Coverage target: " + percentage(TARGET_LINE_COVERAGE) + " line coverage.");
+
+        CoverageSnapshot baselineCoverage = collectCoverage(
+                buildTool,
+                initialRequest.projectRoot(),
+                initialRequest.cutPath(),
+                latestSessionResult.outputPath(),
+                buildExecutable,
+                additionalBuildArgs,
+                timeout
+        );
+        progress("Coverage before maximizing: " + baselineCoverage.describe());
+        if (baselineCoverage.lineCoverage() >= TARGET_LINE_COVERAGE) {
+            progress("Coverage after maximizing: " + baselineCoverage.describe());
+            return latestSessionResult;
+        }
+
+        CoverageSnapshot currentCoverage = baselineCoverage;
+        for (int coverageAttempt = 1; coverageAttempt <= MAX_COVERAGE_FIX_ATTEMPTS; coverageAttempt++) {
+            progress("Coverage fix attempt " + coverageAttempt + "/" + MAX_COVERAGE_FIX_ATTEMPTS + "...");
+            String latestTestCode = fileService.readFile(latestSessionResult.outputPath());
+            JunitLlmSessionRequest coverageFixRequest = new JunitLlmSessionRequest(
+                    initialRequest.projectRoot(),
+                    initialRequest.cutPath(),
+                    latestSessionResult.outputPath(),
+                    JunitLlmOperation.FIX,
+                    latestSessionResult.sessionId(),
+                    latestTestCode,
+                    latestTestCode,
+                    buildCoverageClientLogs(initialRequest.cutPath(), currentCoverage)
+            );
+            latestSessionResult = runSessionWithDependencySourceRetry(
+                    coverageFixRequest,
+                    buildTool,
+                    buildExecutable,
+                    additionalBuildArgs,
+                    timeout
+            );
+
+            ValidationPassResult coverageValidationResult = fixUntilValidationPasses(
+                    initialRequest,
+                    latestSessionResult,
+                    buildTool,
+                    buildExecutable,
+                    additionalBuildArgs,
+                    timeout,
+                    lastBuiltTestCode
+            );
+            latestSessionResult = coverageValidationResult.sessionResult();
+            lastBuiltTestCode = coverageValidationResult.lastBuiltTestCode();
+            if (!coverageValidationResult.buildExecuted()) {
+                progress("Coverage fix attempt " + coverageAttempt + " produced no test changes; skipping coverage build.");
+                continue;
+            }
+
+            currentCoverage = collectCoverage(
+                    buildTool,
+                    initialRequest.projectRoot(),
+                    initialRequest.cutPath(),
+                    latestSessionResult.outputPath(),
+                    buildExecutable,
+                    additionalBuildArgs,
+                    timeout
+            );
+            progress("Coverage after attempt " + coverageAttempt + ": " + currentCoverage.describe());
+            if (currentCoverage.lineCoverage() >= TARGET_LINE_COVERAGE) {
+                progress("Coverage after maximizing: " + currentCoverage.describe());
+                return latestSessionResult;
+            }
+        }
+
+        throw new IllegalStateException(
+                "Coverage target not met. Started at " + baselineCoverage.describe()
+                        + ", ended at " + currentCoverage.describe()
+                        + ", target is " + percentage(TARGET_LINE_COVERAGE) + " line coverage."
+        );
+    }
+
     private String preflightFailureMessage(ValidationFailure failure) {
-        return "Local build failed before JAIPilot started. The target test file was temporarily excluded, so this failure comes from other project sources. "
-                + "Resolve the unrelated compile errors first. Output tail: "
-                + tail(SensitiveDataRedactor.redact(failure.result().output()), 6);
+        return "Local build failed before JAIPilot started. Failed phase: "
+                + failure.phase()
+                + ". The target test file was temporarily excluded, so this failure comes from other project sources. "
+                + "Resolve the unrelated build failures first. Failure details: "
+                + failureDetails(failure.result().output(), 6);
     }
 
     private String localValidationFailureMessage(ValidationFailure failure) {
         return "Generated/fixed test did not pass local validation. Failed phase: "
                 + failure.phase()
-                + ". Output tail: "
-                + tail(SensitiveDataRedactor.redact(failure.result().output()), 6);
+                + ". Failure details: "
+                + failureDetails(failure.result().output(), 6);
     }
 
     private String buildFixClientLogs(ValidationFailure failure) {
@@ -284,9 +503,219 @@ public final class JunitLlmWorkflowRunner {
         if (failure.details() != null && !failure.details().isBlank()) {
             builder.append(failure.details()).append(System.lineSeparator());
         }
-        builder.append("Build output tail: ")
-                .append(tail(SensitiveDataRedactor.redact(failure.result().output()), 20));
+        builder.append("Build failure details:")
+                .append(System.lineSeparator())
+                .append(failureDetails(failure.result().output(), 20));
         return builder.toString();
+    }
+
+    private String buildCoverageClientLogs(Path cutPath, CoverageSnapshot snapshot) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("Coverage target: ")
+                .append(percentage(TARGET_LINE_COVERAGE))
+                .append(" line coverage.")
+                .append(System.lineSeparator());
+        builder.append("Class under test: ")
+                .append(cutPath)
+                .append(System.lineSeparator());
+        builder.append("Current line coverage: ")
+                .append(snapshot.describe())
+                .append(System.lineSeparator());
+        builder.append("Improve branch and edge-case assertions to raise coverage without breaking existing behavior.");
+        return builder.toString();
+    }
+
+    private CoverageSnapshot collectCoverage(
+            BuildTool buildTool,
+            Path projectRoot,
+            Path cutPath,
+            Path outputPath,
+            Path buildExecutable,
+            List<String> additionalBuildArgs,
+            Duration timeout
+    ) throws Exception {
+        String testSelector = fileService.deriveTestSelector(outputPath);
+        String gradleProjectPath = gradleProjectPath(buildTool, projectRoot, outputPath);
+        Path reportPath = jacocoReportPath(buildTool, projectRoot, gradleProjectPath);
+        CoverageCoordinate coverageCoordinate = coverageCoordinate(cutPath);
+
+        ExecutionResult coverageResult = executeCoverageCommand(
+                buildTool,
+                projectRoot,
+                buildExecutable,
+                additionalBuildArgs,
+                timeout,
+                testSelector,
+                gradleProjectPath
+        );
+        if (!isSuccessful(coverageResult)) {
+            throw new IllegalStateException(
+                    "Coverage collection failed. Failure details: "
+                            + failureDetails(coverageResult.output(), 8)
+            );
+        }
+
+        CoverageSnapshot snapshot = readJacocoLineCoverage(reportPath, coverageCoordinate);
+        progress("JaCoCo report: " + reportPath);
+        return snapshot;
+    }
+
+    private ExecutionResult executeCoverageCommand(
+            BuildTool buildTool,
+            Path projectRoot,
+            Path buildExecutable,
+            List<String> additionalBuildArgs,
+            Duration timeout,
+            String testSelector,
+            String gradleProjectPath
+    ) throws Exception {
+        return switch (buildTool) {
+            case MAVEN -> executeBuildCommand(
+                    mavenCommandBuilder.buildSingleTestCoverage(
+                            projectRoot,
+                            buildExecutable,
+                            additionalBuildArgs,
+                            testSelector
+                    ),
+                    projectRoot,
+                    timeout
+            );
+            case GRADLE -> runGradleCoverage(
+                    projectRoot,
+                    buildExecutable,
+                    additionalBuildArgs,
+                    timeout,
+                    testSelector,
+                    gradleProjectPath
+            );
+        };
+    }
+
+    private ExecutionResult runGradleCoverage(
+            Path projectRoot,
+            Path buildExecutable,
+            List<String> additionalBuildArgs,
+            Duration timeout,
+            String testSelector,
+            String gradleProjectPath
+    ) throws Exception {
+        Path initScript = Files.createTempFile("jaipilot-gradle-jacoco-", ".gradle");
+        try {
+            Files.writeString(initScript, GRADLE_JACOCO_INIT_SCRIPT, StandardCharsets.UTF_8);
+            return executeBuildCommand(
+                    gradleCommandBuilder.buildSingleTestCoverage(
+                            projectRoot,
+                            buildExecutable,
+                            additionalBuildArgs,
+                            testSelector,
+                            gradleProjectPath,
+                            initScript
+                    ),
+                    projectRoot,
+                    timeout
+            );
+        } finally {
+            Files.deleteIfExists(initScript);
+        }
+    }
+
+    private CoverageSnapshot readJacocoLineCoverage(Path reportPath, CoverageCoordinate coverageCoordinate) throws Exception {
+        if (!Files.isRegularFile(reportPath)) {
+            throw new IllegalStateException("JaCoCo report not found at " + reportPath);
+        }
+
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
+
+        try (InputStream reportStream = Files.newInputStream(reportPath)) {
+            NodeList packageNodes = factory.newDocumentBuilder()
+                    .parse(reportStream)
+                    .getElementsByTagName("package");
+            for (int packageIndex = 0; packageIndex < packageNodes.getLength(); packageIndex++) {
+                Node packageNode = packageNodes.item(packageIndex);
+                if (!(packageNode instanceof Element packageElement)) {
+                    continue;
+                }
+                if (!coverageCoordinate.packagePath().equals(packageElement.getAttribute("name"))) {
+                    continue;
+                }
+                NodeList sourceFileNodes = packageElement.getElementsByTagName("sourcefile");
+                for (int sourceFileIndex = 0; sourceFileIndex < sourceFileNodes.getLength(); sourceFileIndex++) {
+                    Node sourceFileNode = sourceFileNodes.item(sourceFileIndex);
+                    if (!(sourceFileNode instanceof Element sourceFileElement)) {
+                        continue;
+                    }
+                    if (!coverageCoordinate.sourceFileName().equals(sourceFileElement.getAttribute("name"))) {
+                        continue;
+                    }
+                    return lineCoverageFromCounter(reportPath, sourceFileElement);
+                }
+            }
+        }
+
+        throw new IllegalStateException(
+                "JaCoCo report did not contain line coverage for " + coverageCoordinate.packagePath() + "/"
+                        + coverageCoordinate.sourceFileName()
+        );
+    }
+
+    private CoverageSnapshot lineCoverageFromCounter(Path reportPath, Element sourceFileElement) {
+        NodeList counters = sourceFileElement.getElementsByTagName("counter");
+        for (int index = 0; index < counters.getLength(); index++) {
+            Node counterNode = counters.item(index);
+            if (!(counterNode instanceof Element counterElement)) {
+                continue;
+            }
+            if (!"LINE".equals(counterElement.getAttribute("type"))) {
+                continue;
+            }
+            int missed = Integer.parseInt(counterElement.getAttribute("missed"));
+            int covered = Integer.parseInt(counterElement.getAttribute("covered"));
+            return new CoverageSnapshot(reportPath, covered, missed);
+        }
+        throw new IllegalStateException("JaCoCo report did not contain LINE counter for " + reportPath);
+    }
+
+    private CoverageCoordinate coverageCoordinate(Path cutPath) {
+        String sourceFileName = cutPath.getFileName() == null ? "" : cutPath.getFileName().toString();
+        String packagePath = "";
+        for (String line : fileService.readFile(cutPath).lines().toList()) {
+            String trimmed = line.trim();
+            if (!trimmed.startsWith("package ") || !trimmed.endsWith(";")) {
+                continue;
+            }
+            String packageName = trimmed.substring("package ".length(), trimmed.length() - 1).trim();
+            packagePath = packageName.replace('.', '/');
+            break;
+        }
+        return new CoverageCoordinate(packagePath, sourceFileName);
+    }
+
+    private Path jacocoReportPath(BuildTool buildTool, Path projectRoot, String gradleProjectPath) {
+        return switch (buildTool) {
+            case MAVEN -> projectRoot.resolve("target/site/jacoco/jacoco.xml").normalize();
+            case GRADLE -> gradleProjectDirectory(projectRoot, gradleProjectPath)
+                    .resolve("build/reports/jacoco/test/jacocoTestReport.xml")
+                    .normalize();
+        };
+    }
+
+    private Path gradleProjectDirectory(Path projectRoot, String gradleProjectPath) {
+        if (gradleProjectPath == null || gradleProjectPath.isBlank()) {
+            return projectRoot.normalize();
+        }
+        Path directory = projectRoot.normalize();
+        for (String segment : gradleProjectPath.split(":")) {
+            if (!segment.isBlank()) {
+                directory = directory.resolve(segment);
+            }
+        }
+        return directory.normalize();
     }
 
     private <T> T withTargetFileExcluded(Path outputPath, CheckedOperation<T> operation) throws Exception {
@@ -334,7 +763,24 @@ public final class JunitLlmWorkflowRunner {
         return false;
     }
 
-    private void tryDownloadDependencySources(
+    private boolean tryDownloadDependencySources(
+            BuildTool buildTool,
+            Path projectRoot,
+            Path buildExecutable,
+            List<String> additionalBuildArgs,
+            Duration timeout
+    ) {
+        ExecutionResult result = tryDownloadDependencySourcesResult(
+                buildTool,
+                projectRoot,
+                buildExecutable,
+                additionalBuildArgs,
+                timeout
+        );
+        return result != null && isSuccessful(result);
+    }
+
+    private ExecutionResult tryDownloadDependencySourcesResult(
             BuildTool buildTool,
             Path projectRoot,
             Path buildExecutable,
@@ -342,7 +788,7 @@ public final class JunitLlmWorkflowRunner {
             Duration timeout
     ) {
         try {
-            switch (buildTool) {
+            return switch (buildTool) {
                 case MAVEN -> executeBuildCommand(
                         mavenCommandBuilder.buildDependencySourcesDownload(projectRoot, buildExecutable, additionalBuildArgs),
                         projectRoot,
@@ -354,13 +800,14 @@ public final class JunitLlmWorkflowRunner {
                         additionalBuildArgs,
                         timeout
                 );
-            }
+            };
         } catch (Exception ignored) {
             // Best effort: if source download fails, the second backend/context attempt will report the original miss.
+            return null;
         }
     }
 
-    private void runGradleDependencySourceDownload(
+    private ExecutionResult runGradleDependencySourceDownload(
             Path projectRoot,
             Path buildExecutable,
             List<String> additionalBuildArgs,
@@ -369,7 +816,7 @@ public final class JunitLlmWorkflowRunner {
         Path initScript = Files.createTempFile("jaipilot-gradle-sources-", ".gradle");
         try {
             Files.writeString(initScript, GRADLE_DEPENDENCY_SOURCES_INIT_SCRIPT, StandardCharsets.UTF_8);
-            executeBuildCommand(
+            return executeBuildCommand(
                     gradleCommandBuilder.buildDependencySourcesDownload(
                             projectRoot,
                             buildExecutable,
@@ -460,6 +907,28 @@ public final class JunitLlmWorkflowRunner {
         };
     }
 
+    private List<String> buildCodebaseRulesValidationCommand(
+            BuildTool buildTool,
+            Path projectRoot,
+            Path outputPath,
+            Path buildExecutable,
+            List<String> additionalBuildArgs
+    ) {
+        return switch (buildTool) {
+            case MAVEN -> mavenCommandBuilder.buildCodebaseRulesValidation(
+                    projectRoot,
+                    buildExecutable,
+                    additionalBuildArgs
+            );
+            case GRADLE -> gradleCommandBuilder.buildCodebaseRulesValidation(
+                    projectRoot,
+                    buildExecutable,
+                    additionalBuildArgs,
+                    gradleProjectPath(buildTool, projectRoot, outputPath)
+            );
+        };
+    }
+
     private List<String> buildSingleTestExecutionCommand(
             BuildTool buildTool,
             Path projectRoot,
@@ -508,9 +977,76 @@ public final class JunitLlmWorkflowRunner {
         return String.join(" | ", lines.subList(startIndex, lines.size()));
     }
 
+    private String readTestCode(Path outputPath) {
+        if (outputPath == null || !Files.isRegularFile(outputPath)) {
+            return "";
+        }
+        return fileService.readFile(outputPath);
+    }
+
+    private String normalizeTestCode(String testCode) {
+        return testCode == null ? "" : testCode;
+    }
+
+    private boolean hasTestCodeChanged(String previousTestCode, String currentTestCode) {
+        return !normalizeTestCode(previousTestCode).equals(normalizeTestCode(currentTestCode));
+    }
+
+    private String failureDetails(String output, int fallbackTailLines) {
+        String summarized = SensitiveDataRedactor.redactBuildOutput(output);
+        if (summarized != null && !summarized.isBlank()) {
+            return summarized;
+        }
+        return tail(SensitiveDataRedactor.redact(output), fallbackTailLines);
+    }
+
+    private void progress(String message) {
+        buildLogWriter.println("PROGRESS: " + message);
+        buildLogWriter.flush();
+    }
+
+    private String percentage(double ratio) {
+        return String.format(Locale.ROOT, "%.2f%%", ratio * 100.0d);
+    }
+
     @FunctionalInterface
     private interface CheckedOperation<T> {
         T run() throws Exception;
+    }
+
+    private record CoverageCoordinate(String packagePath, String sourceFileName) {
+    }
+
+    private record CoverageSnapshot(Path reportPath, int coveredLines, int missedLines) {
+        int totalLines() {
+            return coveredLines + missedLines;
+        }
+
+        double lineCoverage() {
+            int total = totalLines();
+            if (total <= 0) {
+                return 0.0d;
+            }
+            return coveredLines / (double) total;
+        }
+
+        String describe() {
+            return String.format(
+                    Locale.ROOT,
+                    "%.2f%% (%d/%d lines) [%s]",
+                    lineCoverage() * 100.0d,
+                    coveredLines,
+                    totalLines(),
+                    reportPath
+            );
+        }
+    }
+
+    private record ValidationPassResult(
+            JunitLlmSessionResult sessionResult,
+            String lastBuiltTestCode,
+            boolean buildExecuted
+    ) {
     }
 
     private record ValidationFailure(String phase, ExecutionResult result, String details) {

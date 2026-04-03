@@ -145,7 +145,7 @@ Common options:
 
 ## How It Works
 
-`jaipilot generate` reads local source files, calls the backend generation API, polls for completion, writes the returned test file, and validates it with your build tool (`test-compile`/targeted `test` for Maven, `testClasses`/targeted `test --tests` for Gradle).
+`jaipilot generate` reads local source files, calls the backend generation API, polls for completion, writes the returned test file, and validates it with your build tool in three stages: compile, codebase rules, and targeted test execution (`test-compile`/`verify`/targeted `test` for Maven, `testClasses`/`check`/targeted `test --tests` for Gradle). Rule validation is run with full-suite test execution skipped because JAIPilot already runs targeted test validation separately.
 
 If validation fails, JAIPilot automatically performs iterative fixing passes using build failure logs. When required context classes are missing from local sources, JAIPilot can trigger dependency source download and retry.
 

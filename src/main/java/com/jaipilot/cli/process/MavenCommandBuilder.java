@@ -8,6 +8,8 @@ import java.util.Locale;
 
 public final class MavenCommandBuilder implements LocalBuildCommandBuilder {
 
+    private static final String JACOCO_PLUGIN_COORDINATE = "org.jacoco:jacoco-maven-plugin:0.8.12";
+
     @Override
     public BuildTool buildTool() {
         return BuildTool.MAVEN;
@@ -41,6 +43,19 @@ public final class MavenCommandBuilder implements LocalBuildCommandBuilder {
         return command;
     }
 
+    @Override
+    public List<String> buildCodebaseRulesValidation(
+            Path projectRoot,
+            Path explicitMavenExecutable,
+            List<String> additionalArguments
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitMavenExecutable, additionalArguments);
+        command.add("-DskipTests");
+        command.add("-DskipITs");
+        command.add("verify");
+        return command;
+    }
+
     public List<String> buildDependencySourcesDownload(
             Path projectRoot,
             Path explicitMavenExecutable,
@@ -49,6 +64,23 @@ public final class MavenCommandBuilder implements LocalBuildCommandBuilder {
         List<String> command = baseCommand(projectRoot, explicitMavenExecutable, additionalArguments);
         command.add("-DskipTests");
         command.add("dependency:sources");
+        return command;
+    }
+
+    public List<String> buildSingleTestCoverage(
+            Path projectRoot,
+            Path explicitMavenExecutable,
+            List<String> additionalArguments,
+            String testSelector
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitMavenExecutable, additionalArguments);
+        command.add("-DskipTests=false");
+        command.add("-DfailIfNoTests=false");
+        command.add("-Dsurefire.failIfNoSpecifiedTests=false");
+        command.add("-Dtest=" + testSelector);
+        command.add(JACOCO_PLUGIN_COORDINATE + ":prepare-agent");
+        command.add("test");
+        command.add(JACOCO_PLUGIN_COORDINATE + ":report");
         return command;
     }
 

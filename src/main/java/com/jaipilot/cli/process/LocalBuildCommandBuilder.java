@@ -19,4 +19,10 @@ public interface LocalBuildCommandBuilder {
             List<String> additionalArguments,
             String testSelector
     );
+
+    List<String> buildCodebaseRulesValidation(
+            Path projectRoot,
+            Path explicitBuildExecutable,
+            List<String> additionalArguments
+    );
 }

@@ -10,6 +10,7 @@ import java.util.jar.JarOutputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProjectFileServiceTest {
@@ -304,6 +305,71 @@ class ProjectFileServiceTest {
         assertEquals(1, contextSources.size());
         assertTrue(contextSources.get(0).contains("package com.google.common.base;"));
         assertTrue(contextSources.get(0).contains("class Strings"));
+    }
+
+    @Test
+    void readRequestedContextSourcesPrefersProjectSourcesOverTargetDirectory() throws Exception {
+        Path projectRoot = tempDir.resolve("workspace");
+        writeSource(
+                projectRoot,
+                "src/main/java/com/example/RequestedContext.java",
+                """
+                package com.example;
+
+                public class RequestedContext {
+                    String source() {
+                        return "src-main";
+                    }
+                }
+                """
+        );
+        writeSource(
+                projectRoot,
+                "target/generated-sources/com/example/RequestedContext.java",
+                """
+                package com.example;
+
+                public class RequestedContext {
+                    String source() {
+                        return "target-generated";
+                    }
+                }
+                """
+        );
+
+        List<String> contextSources = projectFileService.readRequestedContextSources(
+                projectRoot,
+                List.of("com/example/RequestedContext.java")
+        );
+
+        assertEquals(1, contextSources.size());
+        assertTrue(contextSources.get(0).contains("src-main"));
+        assertTrue(!contextSources.get(0).contains("target-generated"));
+    }
+
+    @Test
+    void readRequestedContextSourcesDoesNotResolveFromTargetOnly() throws Exception {
+        Path projectRoot = tempDir.resolve("workspace");
+        writeSource(
+                projectRoot,
+                "target/generated-sources/com/example/RequestedContext.java",
+                """
+                package com.example;
+
+                public class RequestedContext {
+                }
+                """
+        );
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> projectFileService.readRequestedContextSources(
+                        projectRoot,
+                        List.of("com/example/RequestedContext.java")
+                )
+        );
+
+        assertTrue(exception.getMessage().contains("Unable to resolve requested context class path"));
     }
 
     @Test
