@@ -12,7 +12,6 @@ import com.jaipilot.cli.process.ProcessExecutor;
 import com.jaipilot.cli.util.SensitiveDataRedactor;
 import java.io.PrintWriter;
 import java.io.Writer;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -26,49 +25,6 @@ public final class JunitLlmWorkflowRunner {
 
     private static final PrintWriter QUIET_WRITER = new PrintWriter(Writer.nullWriter());
     private static final int MAX_FIX_ATTEMPTS = 20;
-    private static final int MAX_MISSING_CONTEXT_RETRIES = 3;
-
-    private static final String GRADLE_DEPENDENCY_SOURCES_INIT_SCRIPT = """
-            gradle.rootProject {
-                tasks.register("jaipilotDownloadSources") {
-                    doLast {
-                        File moduleDir = new File(System.getProperty("jaipilot.moduleDir", "")).canonicalFile
-                        def targetProject = rootProject.allprojects.find { project ->
-                            project.projectDir.canonicalFile == moduleDir
-                        }
-                        if (targetProject == null) {
-                            println("JAIPilot source download skipped because module project was not found: " + moduleDir)
-                            return
-                        }
-
-                        Set<String> sourceNotations = new LinkedHashSet<>()
-                        targetProject.configurations.findAll { it.canBeResolved }.each { configuration ->
-                            try {
-                                configuration.resolvedConfiguration.resolvedArtifacts.each { artifact ->
-                                    String group = artifact.moduleVersion.id.group
-                                    String name = artifact.name
-                                    String version = artifact.moduleVersion.id.version
-                                    if (group != null && !group.isBlank()
-                                            && name != null && !name.isBlank()
-                                            && version != null && !version.isBlank()) {
-                                        sourceNotations.add(group + ":" + name + ":" + version + ":sources@jar")
-                                    }
-                                }
-                            } catch (Exception ignored) {
-                            }
-                        }
-
-                        sourceNotations.each { notation ->
-                            try {
-                                configurations.detachedConfiguration(dependencies.create(notation)).resolve()
-                            } catch (Exception ignored) {
-                            }
-                        }
-                        println("JAIPilot source download attempted for " + sourceNotations.size() + " dependencies in " + targetProject.path)
-                    }
-                }
-            }
-            """;
 
     private final JunitLlmSessionRunner sessionRunner;
     private final MavenCommandBuilder mavenCommandBuilder;
@@ -77,7 +33,6 @@ public final class JunitLlmWorkflowRunner {
     private final ProjectFileService fileService;
     private final boolean streamBuildLogs;
     private final PrintWriter buildLogWriter;
-    private int missingContextRetryCount;
 
     public JunitLlmWorkflowRunner(
             JunitLlmSessionRunner sessionRunner,
@@ -121,8 +76,6 @@ public final class JunitLlmWorkflowRunner {
             List<String> additionalBuildArgs,
             Duration timeout
     ) throws Exception {
-        missingContextRetryCount = 0;
-
         BuildTool buildTool = resolveBuildTool(initialRequest.projectRoot(), buildExecutable);
         Path compilationRoot = resolveCompilationRoot(
                 buildTool,
@@ -145,14 +98,7 @@ public final class JunitLlmWorkflowRunner {
             throw new IllegalStateException(preflightFailureMessage(preflightFailure));
         }
 
-        JunitLlmSessionResult latestSessionResult = runSessionWithDependencySourceRetry(
-                initialRequest,
-                buildTool,
-                compilationRoot,
-                buildExecutable,
-                additionalBuildArgs,
-                timeout
-        );
+        JunitLlmSessionResult latestSessionResult = sessionRunner.run(initialRequest);
 
         return fixUntilCompilationPasses(
                 initialRequest,
@@ -308,14 +254,7 @@ public final class JunitLlmWorkflowRunner {
                     latestTestCode,
                     buildFixClientLogs(validationFailure)
             );
-            latestSessionResult = runSessionWithDependencySourceRetry(
-                    fixRequest,
-                    buildTool,
-                    compilationRoot,
-                    buildExecutable,
-                    additionalBuildArgs,
-                    timeout
-            );
+            latestSessionResult = sessionRunner.run(fixRequest);
 
             currentTestCode = readTestCode(latestSessionResult.outputPath());
             if (!hasTestCodeChanged(latestCompiledTestCode, currentTestCode)) {
@@ -384,137 +323,6 @@ public final class JunitLlmWorkflowRunner {
             return operation.run();
         } finally {
             Files.move(backupPath, outputPath, StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
-    private JunitLlmSessionResult runSessionWithDependencySourceRetry(
-            JunitLlmSessionRequest request,
-            BuildTool buildTool,
-            Path compilationRoot,
-            Path buildExecutable,
-            List<String> additionalBuildArgs,
-            Duration timeout
-    ) throws Exception {
-        while (true) {
-            try {
-                return sessionRunner.run(request);
-            } catch (IllegalStateException exception) {
-                if (!shouldRetryForMissingContextPath(exception)
-                        || missingContextRetryCount >= MAX_MISSING_CONTEXT_RETRIES) {
-                    throw exception;
-                }
-                missingContextRetryCount++;
-                int remainingRetries = MAX_MISSING_CONTEXT_RETRIES - missingContextRetryCount;
-                announceDependencySourceDownloadResult(
-                        tryDownloadDependencySources(
-                                buildTool,
-                                request.projectRoot(),
-                                compilationRoot,
-                                buildExecutable,
-                                additionalBuildArgs,
-                                timeout
-                        ),
-                        "Dependency sources were refreshed after missing context class path; retrying backend session. "
-                                + "Retries remaining: " + remainingRetries + ".",
-                        "Dependency source refresh after missing context class path did not complete; retrying backend session. "
-                                + "Retries remaining: " + remainingRetries + "."
-                );
-            }
-        }
-    }
-
-    private void announceDependencySourceDownloadResult(
-            boolean successful,
-            String successMessage,
-            String failureMessage
-    ) {
-        progress(successful ? successMessage : failureMessage);
-    }
-
-    private boolean shouldRetryForMissingContextPath(IllegalStateException exception) {
-        Throwable current = exception;
-        while (current != null) {
-            String message = current.getMessage();
-            if (message != null && message.contains("Unable to resolve requested context class path ")) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
-    }
-
-    private boolean tryDownloadDependencySources(
-            BuildTool buildTool,
-            Path projectRoot,
-            Path compilationRoot,
-            Path buildExecutable,
-            List<String> additionalBuildArgs,
-            Duration timeout
-    ) {
-        ExecutionResult result = tryDownloadDependencySourcesResult(
-                buildTool,
-                projectRoot,
-                compilationRoot,
-                buildExecutable,
-                additionalBuildArgs,
-                timeout
-        );
-        fileService.refreshDependencySourceIndex();
-        return result != null && isSuccessful(result);
-    }
-
-    private ExecutionResult tryDownloadDependencySourcesResult(
-            BuildTool buildTool,
-            Path projectRoot,
-            Path compilationRoot,
-            Path buildExecutable,
-            List<String> additionalBuildArgs,
-            Duration timeout
-    ) {
-        try {
-            return switch (buildTool) {
-                case MAVEN -> executeBuildCommand(
-                        mavenCommandBuilder.buildDependencySourcesDownload(projectRoot, buildExecutable, additionalBuildArgs),
-                        compilationRoot,
-                        timeout
-                );
-                case GRADLE -> runGradleDependencySourceDownload(
-                        projectRoot,
-                        compilationRoot,
-                        buildExecutable,
-                        additionalBuildArgs,
-                        timeout
-                );
-            };
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
-
-    private ExecutionResult runGradleDependencySourceDownload(
-            Path projectRoot,
-            Path moduleRoot,
-            Path buildExecutable,
-            List<String> additionalBuildArgs,
-            Duration timeout
-    ) throws Exception {
-        Path initScript = Files.createTempFile("jaipilot-gradle-sources-", ".gradle");
-        try {
-            Files.writeString(initScript, GRADLE_DEPENDENCY_SOURCES_INIT_SCRIPT, StandardCharsets.UTF_8);
-            List<String> scopedArgs = new ArrayList<>(additionalBuildArgs);
-            scopedArgs.add("-Djaipilot.moduleDir=" + moduleRoot.toAbsolutePath().normalize());
-            return executeBuildCommand(
-                    gradleCommandBuilder.buildDependencySourcesDownload(
-                            projectRoot,
-                            buildExecutable,
-                            scopedArgs,
-                            initScript
-                    ),
-                    projectRoot,
-                    timeout
-            );
-        } finally {
-            Files.deleteIfExists(initScript);
         }
     }
 

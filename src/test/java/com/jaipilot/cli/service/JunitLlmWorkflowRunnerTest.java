@@ -254,7 +254,7 @@ class JunitLlmWorkflowRunnerTest {
     }
 
     @Test
-    void runRetriesMissingContextAfterDependencySourceDownload() throws Exception {
+    void runFailsFastWhenMissingContextCannotBeResolved() throws Exception {
         Path projectRoot = tempDir.resolve("missing-context-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
@@ -270,27 +270,32 @@ class JunitLlmWorkflowRunnerTest {
         );
         JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());
 
-        JunitLlmSessionResult result = workflowRunner.run(
-                new JunitLlmSessionRequest(
-                        projectRoot,
-                        cutPath,
-                        outputPath,
-                        JunitLlmOperation.GENERATE,
-                        null,
-                        "",
-                        "",
-                        null
-                ),
-                fakeMaven,
-                List.of(),
-                Duration.ofSeconds(10)
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> workflowRunner.run(
+                        new JunitLlmSessionRequest(
+                                projectRoot,
+                                cutPath,
+                                outputPath,
+                                JunitLlmOperation.GENERATE,
+                                null,
+                                "",
+                                "",
+                                null
+                        ),
+                        fakeMaven,
+                        List.of(),
+                        Duration.ofSeconds(10)
+                )
         );
 
-        assertEquals("session-1", result.sessionId());
-        assertEquals(2, backendClient.requests.size());
+        assertTrue(exception.getMessage().contains("Unable to resolve requested context class path com/example/Dependency.java"));
+        assertEquals(1, backendClient.requests.size());
 
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertTrue(commandLog.stream().anyMatch(line -> line.contains("dependency:sources")));
+        assertEquals(1, commandLog.size());
+        assertTrue(commandLog.stream().allMatch(line -> line.contains("test-compile")));
+        assertFalse(commandLog.stream().anyMatch(line -> line.contains("dependency:sources")));
     }
 
     private JunitLlmWorkflowRunner newWorkflowRunner(StubBackendClient backendClient, ProjectFileService fileService) {

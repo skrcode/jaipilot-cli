@@ -4,7 +4,9 @@ import com.jaipilot.cli.process.BuildTool;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import org.junit.jupiter.api.Test;
@@ -305,6 +307,82 @@ class ProjectFileServiceTest {
         assertEquals(1, contextSources.size());
         assertTrue(contextSources.get(0).contains("package com.google.common.base;"));
         assertTrue(contextSources.get(0).contains("class Strings"));
+    }
+
+    @Test
+    void readRequestedContextSourcesFallsBackToClasspathResolverWithNormalizedPath() throws Exception {
+        Path projectRoot = tempDir.resolve("workspace");
+        Path cutPath = writeSource(
+                projectRoot,
+                "src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        List<String> capturedFqcns = new ArrayList<>();
+        ProjectFileService classpathAwareFileService = new ProjectFileService(
+                List.of(),
+                (ignoredProjectRoot, ignoredModuleRoot, requestedFqcn) -> {
+                    capturedFqcns.add(requestedFqcn);
+                    if (!"com.myntra.commons.dto.PriceDto".equals(requestedFqcn)) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(new ProjectFileService.ResolvedContextSource(
+                            "com/myntra/commons/dto/PriceDto.java",
+                            """
+                            package com.myntra.commons.dto;
+
+                            public class PriceDto {
+                            }
+                            """
+                    ));
+                }
+        );
+
+        List<String> contextSources = classpathAwareFileService.readRequestedContextSources(
+                projectRoot,
+                cutPath,
+                List.of("com/myntra/commons/dto/PriceDto.java")
+        );
+
+        assertEquals(List.of("com.myntra.commons.dto.PriceDto"), capturedFqcns);
+        assertEquals(1, contextSources.size());
+        assertTrue(contextSources.get(0).contains("package com.myntra.commons.dto;"));
+        assertTrue(contextSources.get(0).contains("class PriceDto"));
+    }
+
+    @Test
+    void readRequestedContextSourcesFailsFastWithActionableHintWhenClasspathResolverMisses() throws Exception {
+        Path projectRoot = tempDir.resolve("workspace");
+        Path cutPath = writeSource(
+                projectRoot,
+                "src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        ProjectFileService classpathAwareFileService = new ProjectFileService(
+                List.of(),
+                (ignoredProjectRoot, ignoredModuleRoot, requestedFqcn) -> Optional.empty()
+        );
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> classpathAwareFileService.readRequestedContextSources(
+                        projectRoot,
+                        cutPath,
+                        List.of("com/myntra/commons/dto/MissingDto.java")
+                )
+        );
+
+        assertTrue(exception.getMessage().contains("Unable to resolve requested context class path com/myntra/commons/dto/MissingDto.java"));
+        assertTrue(exception.getMessage().contains("module test classpath"));
     }
 
     @Test
