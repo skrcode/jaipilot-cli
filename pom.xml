@@ -38,7 +38,7 @@
         <maven.invoker.version>3.3.0</maven.invoker.version>
         <gradle.tooling.api.version>7.3-20210825160000+0000</gradle.tooling.api.version>
         <cfr.version>0.152</cfr.version>
-        <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
+        <maven.compiler.plugin.version>3.15.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
         <maven.jar.plugin.version>3.4.2</maven.jar.plugin.version>
         <maven.shade.plugin.version>3.6.0</maven.shade.plugin.version>
