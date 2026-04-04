@@ -16,21 +16,18 @@ public final class DefaultSourceResolver implements SourceResolver {
     private static final System.Logger LOGGER = System.getLogger(DefaultSourceResolver.class.getName());
 
     private final Path moduleRoot;
-    private final MavenCoordinateExtractor coordinateExtractor;
     private final CfrDecompiler cfrDecompiler;
 
     public DefaultSourceResolver(Path projectRoot, Path moduleRoot) {
-        this(projectRoot, moduleRoot, new MavenCoordinateExtractor(), new CfrDecompiler());
+        this(projectRoot, moduleRoot, new CfrDecompiler());
     }
 
     DefaultSourceResolver(
             Path projectRoot,
             Path moduleRoot,
-            MavenCoordinateExtractor coordinateExtractor,
             CfrDecompiler cfrDecompiler
     ) {
         this.moduleRoot = moduleRoot == null ? null : moduleRoot.toAbsolutePath().normalize();
-        this.coordinateExtractor = coordinateExtractor;
         this.cfrDecompiler = cfrDecompiler;
     }
 
@@ -96,14 +93,7 @@ public final class DefaultSourceResolver implements SourceResolver {
             return Optional.empty();
         }
 
-        MavenCoordinates coordinates = classResult.externalCoordinates()
-                .or(() -> coordinateExtractor.extract(jarPath))
-                .orElse(null);
-        if (coordinates == null) {
-            return Optional.empty();
-        }
-
-        Path sourceJar = locateSourceJar(jarPath, coordinates).orElse(null);
+        Path sourceJar = locateSourceJar(jarPath).orElse(null);
         if (sourceJar == null) {
             return Optional.empty();
         }
@@ -150,8 +140,8 @@ public final class DefaultSourceResolver implements SourceResolver {
         }
     }
 
-    private Optional<Path> locateSourceJar(Path dependencyJar, MavenCoordinates coordinates) {
-        for (Path candidate : sourceJarCandidates(dependencyJar, coordinates)) {
+    private Optional<Path> locateSourceJar(Path dependencyJar) {
+        for (Path candidate : sourceJarCandidates(dependencyJar)) {
             if (Files.isRegularFile(candidate)) {
                 return Optional.of(candidate.toAbsolutePath().normalize());
             }
@@ -159,7 +149,7 @@ public final class DefaultSourceResolver implements SourceResolver {
         return Optional.empty();
     }
 
-    private List<Path> sourceJarCandidates(Path dependencyJar, MavenCoordinates coordinates) {
+    private List<Path> sourceJarCandidates(Path dependencyJar) {
         List<Path> candidates = new ArrayList<>();
         Path normalizedJar = dependencyJar.toAbsolutePath().normalize();
 
@@ -180,16 +170,6 @@ public final class DefaultSourceResolver implements SourceResolver {
                     // Ignore unreadable directories.
                 }
             }
-        }
-
-        for (Path repositoryRoot : localMavenRepositories()) {
-            Path coordinatePath = repositoryRoot
-                    .resolve(coordinates.groupId().replace('.', '/'))
-                    .resolve(coordinates.artifactId())
-                    .resolve(coordinates.version());
-            String prefix = coordinates.artifactId() + '-' + coordinates.version();
-            candidates.add(coordinatePath.resolve(prefix + "-sources.jar"));
-            candidates.add(coordinatePath.resolve(prefix + "-source.jar"));
         }
 
         return candidates.stream()
@@ -213,62 +193,4 @@ public final class DefaultSourceResolver implements SourceResolver {
         }
     }
 
-    private List<Path> localMavenRepositories() {
-        String userHome = System.getProperty("user.home", "");
-        if (userHome.isBlank()) {
-            return List.of();
-        }
-        Path homePath = Path.of(userHome);
-
-        List<Path> roots = new ArrayList<>();
-        String explicitRepo = firstNonBlank(
-                System.getProperty("maven.repo.local"),
-                System.getenv("MAVEN_REPO_LOCAL"),
-                System.getenv("M2_REPO")
-        );
-        if (explicitRepo != null) {
-            roots.add(resolveConfiguredPath(homePath, explicitRepo));
-        }
-        roots.add(homePath.resolve(".m2/repository"));
-        return roots.stream()
-                .map(Path::toAbsolutePath)
-                .map(Path::normalize)
-                .distinct()
-                .toList();
-    }
-
-    private static String firstNonBlank(String... values) {
-        if (values == null) {
-            return null;
-        }
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value;
-            }
-        }
-        return null;
-    }
-
-    private static Path resolveConfiguredPath(Path homePath, String configuredPath) {
-        String normalized = configuredPath == null ? "" : configuredPath.trim();
-        if (normalized.isBlank()) {
-            return homePath.resolve(".m2/repository").normalize();
-        }
-
-        String userHome = homePath.toString();
-        normalized = normalized.replace("${user.home}", userHome);
-        String envHome = System.getenv("HOME");
-        if (envHome != null && !envHome.isBlank()) {
-            normalized = normalized.replace("${env.HOME}", envHome);
-        }
-        if (normalized.startsWith("~")) {
-            normalized = userHome + normalized.substring(1);
-        }
-
-        Path path = Path.of(normalized);
-        if (!path.isAbsolute()) {
-            path = homePath.resolve(path);
-        }
-        return path.normalize();
-    }
 }

@@ -10,7 +10,6 @@ import com.jaipilot.cli.classpath.ResolvedSource;
 import com.jaipilot.cli.process.BuildTool;
 import com.jaipilot.cli.util.JavaSourceFormatter;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.FileVisitResult;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -26,10 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 public final class ProjectFileService {
 
@@ -43,13 +38,6 @@ public final class ProjectFileService {
             "build.gradle",
             "build.gradle.kts"
     );
-    private static final List<String> SOURCE_JAR_SUFFIXES = List.of(
-            "-sources.jar",
-            "-source.jar"
-    );
-    private static final Pattern MAVEN_LOCAL_REPOSITORY_PATTERN = Pattern.compile(
-            "(?is)<localRepository>\\s*([^<]+?)\\s*</localRepository>"
-    );
     private static final Set<String> SKIPPED_SEARCH_DIRECTORY_NAMES = Set.of(
             ".git",
             ".gradle",
@@ -61,14 +49,12 @@ public final class ProjectFileService {
             "node_modules"
     );
 
-    private final List<Path> dependencySourceSearchRoots;
     private final ContextSourceResolver contextSourceResolver;
     private final Map<String, String> dependencySourceContentCache = new HashMap<>();
     private final Set<String> missingDependencySourcePaths = new HashSet<>();
-    private List<Path> dependencySourceJars;
 
     public ProjectFileService() {
-        this(defaultDependencySourceSearchRoots(), defaultContextSourceResolver());
+        this(List.of(), defaultContextSourceResolver());
     }
 
     ProjectFileService(List<Path> dependencySourceSearchRoots) {
@@ -76,13 +62,8 @@ public final class ProjectFileService {
     }
 
     ProjectFileService(List<Path> dependencySourceSearchRoots, ContextSourceResolver contextSourceResolver) {
-        this.dependencySourceSearchRoots = dependencySourceSearchRoots == null
-                ? List.of()
-                : dependencySourceSearchRoots.stream()
-                        .filter(path -> path != null && !path.toString().isBlank())
-                        .map(Path::normalize)
-                        .distinct()
-                        .toList();
+        // Dependency lookup now resolves through classpath ownership (class -> jar -> source/decompile),
+        // so legacy direct source-jar root scanning is intentionally unused.
         this.contextSourceResolver = contextSourceResolver == null
                 ? defaultContextSourceResolver()
                 : contextSourceResolver;
@@ -292,7 +273,6 @@ public final class ProjectFileService {
     public void refreshDependencySourceIndex() {
         dependencySourceContentCache.clear();
         missingDependencySourcePaths.clear();
-        dependencySourceJars = null;
     }
 
     public String stripJavaExtension(String fileName) {
@@ -306,11 +286,6 @@ public final class ProjectFileService {
         Optional<Path> localPath = resolveRequestedContextPathIfPresent(projectRoot, preferredSourcePath, requestedPath);
         if (localPath.isPresent()) {
             return readFile(localPath.get());
-        }
-
-        Optional<DependencySource> dependencySource = resolveDependencySourceIfPresent(requestedPath);
-        if (dependencySource.isPresent()) {
-            return dependencySource.get().content();
         }
 
         Optional<DependencySource> classpathResolvedSource;
@@ -335,6 +310,17 @@ public final class ProjectFileService {
             Path preferredSourcePath,
             String requestedPath
     ) {
+        String requestedContextPath = normalizeContextPath(requestedPath);
+        if (!requestedContextPath.isBlank()) {
+            String cached = dependencySourceContentCache.get(requestedContextPath);
+            if (cached != null) {
+                return Optional.of(new DependencySource(requestedContextPath, cached));
+            }
+            if (missingDependencySourcePaths.contains(requestedContextPath)) {
+                return Optional.empty();
+            }
+        }
+
         Optional<String> requestedFqcn = normalizeRequestedFqcn(requestedPath);
         if (requestedFqcn.isEmpty()) {
             return Optional.empty();
@@ -348,6 +334,9 @@ public final class ProjectFileService {
                 requestedFqcn.get()
         );
         if (resolved.isEmpty()) {
+            if (!requestedContextPath.isBlank()) {
+                missingDependencySourcePaths.add(requestedContextPath);
+            }
             return Optional.empty();
         }
         String content = resolved.get().content();
@@ -357,7 +346,6 @@ public final class ProjectFileService {
             missingDependencySourcePaths.remove(resolvedContextPath);
         }
 
-        String requestedContextPath = normalizeContextPath(requestedPath);
         if (!requestedContextPath.isBlank()) {
             dependencySourceContentCache.put(requestedContextPath, content);
             missingDependencySourcePaths.remove(requestedContextPath);
@@ -464,9 +452,17 @@ public final class ProjectFileService {
                 return Optional.of(toContextClassPath(projectRoot, resolvedPath.get()));
             }
             if (shouldSearchDependencySources(candidate)) {
-                Optional<DependencySource> dependencySource = resolveDependencySourceIfPresent(requestedPath);
-                if (dependencySource.isPresent()) {
-                    return Optional.of(dependencySource.get().contextPath());
+                try {
+                    Optional<DependencySource> dependencySource = resolveDependencySourceViaClasspathIfPresent(
+                            projectRoot,
+                            sourcePath,
+                            requestedPath
+                    );
+                    if (dependencySource.isPresent()) {
+                        return Optional.of(dependencySource.get().contextPath());
+                    }
+                } catch (ClasspathResolutionException ignored) {
+                    // Imported dependency context is a best-effort hint for the backend.
                 }
             }
             int lastDot = candidate.lastIndexOf('.');
@@ -865,90 +861,6 @@ public final class ProjectFileService {
                 && !importTarget.startsWith("com.sun.");
     }
 
-    private Optional<DependencySource> resolveDependencySourceIfPresent(String requestedPath) {
-        for (Path candidatePath : requestedPathVariants(requestedPath)) {
-            String candidate = normalizeContextPath(normalizeSeparators(candidatePath));
-            if (candidate.isBlank() || !candidate.endsWith(".java")) {
-                continue;
-            }
-            Optional<String> content = readDependencySourceContentIfPresent(candidate);
-            if (content.isPresent()) {
-                return Optional.of(new DependencySource(candidate, content.get()));
-            }
-        }
-        return Optional.empty();
-    }
-
-    private Optional<String> readDependencySourceContentIfPresent(String contextPath) {
-        String normalizedContextPath = normalizeContextPath(contextPath);
-        if (normalizedContextPath.isBlank()) {
-            return Optional.empty();
-        }
-        if (dependencySourceContentCache.containsKey(normalizedContextPath)) {
-            return Optional.of(dependencySourceContentCache.get(normalizedContextPath));
-        }
-        if (missingDependencySourcePaths.contains(normalizedContextPath)) {
-            return Optional.empty();
-        }
-
-        for (Path sourceJar : dependencySourceJars()) {
-            Optional<String> content = readSourceJarEntry(sourceJar, normalizedContextPath);
-            if (content.isPresent()) {
-                dependencySourceContentCache.put(normalizedContextPath, content.get());
-                return content;
-            }
-        }
-
-        missingDependencySourcePaths.add(normalizedContextPath);
-        return Optional.empty();
-    }
-
-    private List<Path> dependencySourceJars() {
-        if (dependencySourceJars != null) {
-            return dependencySourceJars;
-        }
-
-        List<Path> jars = new ArrayList<>();
-        for (Path searchRoot : dependencySourceSearchRoots) {
-            if (!Files.isDirectory(searchRoot)) {
-                continue;
-            }
-            try (var paths = Files.walk(searchRoot)) {
-                paths.filter(Files::isRegularFile)
-                        .filter(this::isSourceJar)
-                        .forEach(jars::add);
-            } catch (IOException exception) {
-                // Ignore unreadable dependency caches and continue with the remaining roots.
-            }
-        }
-        dependencySourceJars = jars.stream().distinct().toList();
-        return dependencySourceJars;
-    }
-
-    private boolean isSourceJar(Path path) {
-        String fileName = path.getFileName() == null ? "" : path.getFileName().toString();
-        for (String suffix : SOURCE_JAR_SUFFIXES) {
-            if (fileName.endsWith(suffix)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private Optional<String> readSourceJarEntry(Path sourceJarPath, String contextPath) {
-        try (ZipFile zipFile = new ZipFile(sourceJarPath.toFile())) {
-            ZipEntry entry = zipFile.getEntry(contextPath);
-            if (entry == null || entry.isDirectory()) {
-                return Optional.empty();
-            }
-            try (InputStream inputStream = zipFile.getInputStream(entry)) {
-                return Optional.of(new String(inputStream.readAllBytes(), StandardCharsets.UTF_8));
-            }
-        } catch (IOException exception) {
-            return Optional.empty();
-        }
-    }
-
     private String normalizeContextPath(String requestedPath) {
         if (requestedPath == null || requestedPath.isBlank()) {
             return "";
@@ -974,97 +886,9 @@ public final class ProjectFileService {
         return normalized;
     }
 
-    private static List<Path> defaultDependencySourceSearchRoots() {
-        String userHome = System.getProperty("user.home");
-        if (userHome == null || userHome.isBlank()) {
-            return List.of();
-        }
-
-        Path homePath = Path.of(userHome);
-        List<Path> roots = new ArrayList<>();
-        String explicitMavenRepo = firstNonBlank(
-                System.getProperty("maven.repo.local"),
-                System.getenv("MAVEN_REPO_LOCAL"),
-                System.getenv("M2_REPO")
-        );
-        if (explicitMavenRepo != null) {
-            roots.add(resolveConfiguredPath(homePath, explicitMavenRepo));
-        }
-        mavenLocalRepositoryFromSettings(homePath).ifPresent(roots::add);
-        roots.add(homePath.resolve(".m2").resolve("repository"));
-
-        String gradleHome = firstNonBlank(System.getenv("GRADLE_USER_HOME"), System.getenv("GRADLE_HOME"));
-        Path gradleBasePath = gradleHome == null
-                ? homePath.resolve(".gradle")
-                : Path.of(gradleHome);
-        roots.add(gradleBasePath.resolve("caches").resolve("modules-2").resolve("files-2.1"));
-        return roots.stream()
-                .map(Path::normalize)
-                .distinct()
-                .toList();
-    }
-
-    private static Optional<Path> mavenLocalRepositoryFromSettings(Path homePath) {
-        Path settingsPath = homePath.resolve(".m2").resolve("settings.xml");
-        if (!Files.isRegularFile(settingsPath)) {
-            return Optional.empty();
-        }
-        try {
-            String content = Files.readString(settingsPath, StandardCharsets.UTF_8);
-            Matcher matcher = MAVEN_LOCAL_REPOSITORY_PATTERN.matcher(content);
-            if (!matcher.find()) {
-                return Optional.empty();
-            }
-            return Optional.of(resolveConfiguredPath(homePath, matcher.group(1)));
-        } catch (Exception ignored) {
-            return Optional.empty();
-        }
-    }
-
-    private static Path resolveConfiguredPath(Path homePath, String configuredPath) {
-        String normalized = configuredPath == null ? "" : configuredPath.trim();
-        if (normalized.isBlank()) {
-            return homePath.resolve(".m2").resolve("repository").normalize();
-        }
-
-        String userHome = homePath.toString();
-        normalized = normalized.replace("${user.home}", userHome);
-        String envHome = System.getenv("HOME");
-        if (envHome != null && !envHome.isBlank()) {
-            normalized = normalized.replace("${env.HOME}", envHome);
-        } else {
-            normalized = normalized.replace("${env.HOME}", userHome);
-        }
-        if (normalized.startsWith("~")) {
-            normalized = userHome + normalized.substring(1);
-        }
-
-        Path path = Path.of(normalized);
-        if (!path.isAbsolute()) {
-            path = homePath.resolve(path);
-        }
-        return path.normalize();
-    }
-
-    private static String firstNonBlank(String primary, String fallback) {
-        return firstNonBlank(new String[] {primary, fallback});
-    }
-
-    private static String firstNonBlank(String... values) {
-        if (values == null) {
-            return null;
-        }
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value;
-            }
-        }
-        return null;
-    }
-
     private String unresolvedContextMessage(String requestedPath) {
         return "Unable to resolve requested context class path " + requestedPath
-                + ". Checked workspace sources, dependency sources, and decompiled class files. "
+                + ". Checked workspace sources, classpath dependency jars, and decompiled class files. "
                 + "Ensure the class is on the module test classpath and dependency artifacts are available.";
     }
 
