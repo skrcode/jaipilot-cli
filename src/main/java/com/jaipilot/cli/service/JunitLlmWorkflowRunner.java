@@ -10,6 +10,7 @@ import com.jaipilot.cli.process.GradleCommandBuilder;
 import com.jaipilot.cli.process.MavenCommandBuilder;
 import com.jaipilot.cli.process.ProcessExecutor;
 import com.jaipilot.cli.util.SensitiveDataRedactor;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.Writer;
@@ -38,6 +39,9 @@ public final class JunitLlmWorkflowRunner {
     private static final List<String> GRADLE_COMPILE_SANITY_ARGS = List.of("--quiet");
     private static final List<String> MAVEN_VALIDATION_ARGS = List.of("-q");
     private static final List<String> GRADLE_VALIDATION_ARGS = List.of("--quiet");
+    private static final Pattern DOCTYPE_DECLARATION_PATTERN = Pattern.compile(
+            "(?is)<!DOCTYPE\\s+[^>]*(?:\\[[\\s\\S]*?\\])?\\s*>"
+    );
 
     private static final String GRADLE_JACOCO_INIT_SCRIPT = """
             import org.gradle.testing.jacoco.tasks.JacocoReport
@@ -557,8 +561,10 @@ public final class JunitLlmWorkflowRunner {
         }
 
         DocumentBuilderFactory factory = secureDocumentBuilderFactory();
+        String reportXml = Files.readString(reportPath, StandardCharsets.UTF_8);
+        String sanitizedReportXml = stripDoctypeDeclaration(reportXml);
 
-        try (InputStream reportStream = Files.newInputStream(reportPath)) {
+        try (InputStream reportStream = new ByteArrayInputStream(sanitizedReportXml.getBytes(StandardCharsets.UTF_8))) {
             NodeList packageNodes = factory.newDocumentBuilder()
                     .parse(reportStream)
                     .getElementsByTagName("package");
@@ -588,6 +594,13 @@ public final class JunitLlmWorkflowRunner {
                 "JaCoCo report did not contain line coverage for " + coverageCoordinate.packagePath() + "/"
                         + coverageCoordinate.sourceFileName()
         );
+    }
+
+    private String stripDoctypeDeclaration(String xml) {
+        if (xml == null || xml.isBlank()) {
+            return "";
+        }
+        return DOCTYPE_DECLARATION_PATTERN.matcher(xml).replaceFirst("");
     }
 
     private DocumentBuilderFactory secureDocumentBuilderFactory() {

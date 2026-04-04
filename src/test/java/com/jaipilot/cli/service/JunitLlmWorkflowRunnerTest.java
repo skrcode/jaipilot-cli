@@ -47,6 +47,7 @@ class JunitLlmWorkflowRunnerTest {
                 class CrashControllerTest {
                     // PASS
                     // HIGH_COVERAGE
+                    // INCLUDE_DOCTYPE
                 }
                 """));
         JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());
@@ -481,8 +482,14 @@ class JunitLlmWorkflowRunnerTest {
                     COVERED=9
                     MISSED=1
                   fi
+                  if grep -q INCLUDE_DOCTYPE "$TEST_FILE" 2>/dev/null; then
+                    DOCTYPE_LINE='<!DOCTYPE report SYSTEM "jacoco.dtd">'
+                  else
+                    DOCTYPE_LINE=''
+                  fi
                   cat > "$JACOCO_XML" <<XML
                 <?xml version=\"1.0\" encoding=\"UTF-8\"?>
+                $DOCTYPE_LINE
                 <report name=\"JAIPilot\">
                   <package name=\"com/example\">
                     <sourcefile name=\"CrashController.java\">
