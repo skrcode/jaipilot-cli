@@ -9,7 +9,6 @@ import com.jaipilot.cli.process.ExecutionResult;
 import com.jaipilot.cli.process.GradleCommandBuilder;
 import com.jaipilot.cli.process.MavenCommandBuilder;
 import com.jaipilot.cli.process.ProcessExecutor;
-import com.jaipilot.cli.util.SensitiveDataRedactor;
 import java.io.PrintWriter;
 import java.io.Writer;
 import java.nio.file.Files;
@@ -550,18 +549,6 @@ public final class JunitLlmWorkflowRunner {
         return !result.timedOut() && result.exitCode() == 0;
     }
 
-    private String tail(String output, int maxLines) {
-        List<String> lines = output.lines()
-                .map(String::trim)
-                .filter(line -> !line.isBlank())
-                .toList();
-        if (lines.isEmpty()) {
-            return "no build output was captured";
-        }
-        int startIndex = Math.max(0, lines.size() - maxLines);
-        return String.join(" | ", lines.subList(startIndex, lines.size()));
-    }
-
     private String readTestCode(Path outputPath) {
         if (outputPath == null || !Files.isRegularFile(outputPath)) {
             return "";
@@ -578,11 +565,10 @@ public final class JunitLlmWorkflowRunner {
     }
 
     private String failureDetails(String output, int fallbackTailLines) {
-        String summarized = SensitiveDataRedactor.redactBuildOutput(output);
-        if (summarized != null && !summarized.isBlank()) {
-            return summarized;
+        if (output == null || output.isBlank()) {
+            return "no build output was captured";
         }
-        return tail(SensitiveDataRedactor.redact(output), fallbackTailLines);
+        return output;
     }
 
     private void progress(String message) {
