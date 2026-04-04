@@ -305,8 +305,24 @@ public final class ProjectFileService {
     }
 
     private String readRequestedContextSource(Path projectRoot, Path preferredSourcePath, String requestedPath) {
+        String normalizedContextPath = normalizeContextPath(requestedPath);
+        Optional<String> requestedFqcn = normalizeRequestedFqcn(requestedPath);
+        LOGGER.log(
+                System.Logger.Level.INFO,
+                "Resolving context source [requestedPath={0}, normalizedPath={1}, fqcn={2}, preferredSource={3}]",
+                requestedPath,
+                normalizedContextPath,
+                requestedFqcn.orElse("<unresolved>"),
+                safePath(preferredSourcePath)
+        );
         Optional<Path> localPath = resolveRequestedContextPathIfPresent(projectRoot, preferredSourcePath, requestedPath);
         if (localPath.isPresent()) {
+            LOGGER.log(
+                    System.Logger.Level.INFO,
+                    "Resolved context source from workspace file for {0}: {1}",
+                    requestedPath,
+                    localPath.get().toAbsolutePath().normalize()
+            );
             return readFile(localPath.get());
         }
 
@@ -321,9 +337,20 @@ public final class ProjectFileService {
             throw classpathResolutionFailure(requestedPath, exception);
         }
         if (classpathResolvedSource.isPresent()) {
+            LOGGER.log(
+                    System.Logger.Level.INFO,
+                    "Resolved context source via classpath for {0}: {1}",
+                    requestedPath,
+                    classpathResolvedSource.get().contextPath()
+            );
             return classpathResolvedSource.get().content();
         }
 
+        LOGGER.log(
+                System.Logger.Level.WARNING,
+                "Unable to resolve context source for {0} after workspace and classpath lookup",
+                requestedPath
+        );
         throw new IllegalStateException(unresolvedContextMessage(requestedPath));
     }
 
@@ -333,29 +360,64 @@ public final class ProjectFileService {
             String requestedPath
     ) {
         String requestedContextPath = normalizeContextPath(requestedPath);
+        LOGGER.log(
+                System.Logger.Level.INFO,
+                "Attempting classpath context lookup [requestedPath={0}, normalizedPath={1}]",
+                requestedPath,
+                requestedContextPath
+        );
         if (!requestedContextPath.isBlank()) {
             String cached = dependencySourceContentCache.get(requestedContextPath);
             if (cached != null) {
+                LOGGER.log(
+                        System.Logger.Level.INFO,
+                        "Classpath lookup cache hit for context path {0}",
+                        requestedContextPath
+                );
                 return Optional.of(new DependencySource(requestedContextPath, cached));
             }
             if (missingDependencySourcePaths.contains(requestedContextPath)) {
+                LOGGER.log(
+                        System.Logger.Level.INFO,
+                        "Classpath lookup previously failed for context path {0}; skipping retry",
+                        requestedContextPath
+                );
                 return Optional.empty();
             }
         }
 
         Optional<String> requestedFqcn = normalizeRequestedFqcn(requestedPath);
         if (requestedFqcn.isEmpty()) {
+            LOGGER.log(
+                    System.Logger.Level.INFO,
+                    "Skipping classpath context lookup because FQCN could not be derived from {0}",
+                    requestedPath
+            );
             return Optional.empty();
         }
 
         Path normalizedProjectRoot = projectRoot.toAbsolutePath().normalize();
         Path moduleRoot = resolveContextModuleRoot(normalizedProjectRoot, preferredSourcePath);
+        LOGGER.log(
+                System.Logger.Level.INFO,
+                "Classpath resolver input [requestedPath={0}, fqcn={1}, projectRoot={2}, moduleRoot={3}]",
+                requestedPath,
+                requestedFqcn.get(),
+                normalizedProjectRoot,
+                moduleRoot
+        );
         Optional<ResolvedContextSource> resolved = contextSourceResolver.resolve(
                 normalizedProjectRoot,
                 moduleRoot,
                 requestedFqcn.get()
         );
         if (resolved.isEmpty()) {
+            LOGGER.log(
+                    System.Logger.Level.WARNING,
+                    "Classpath resolver returned no source for [requestedPath={0}, fqcn={1}]",
+                    requestedPath,
+                    requestedFqcn.get()
+            );
             if (!requestedContextPath.isBlank()) {
                 missingDependencySourcePaths.add(requestedContextPath);
             }
@@ -376,6 +438,13 @@ public final class ProjectFileService {
         String contextPath = resolvedContextPath.isBlank()
                 ? contextPathFromFqcn(requestedFqcn.get())
                 : resolvedContextPath;
+        LOGGER.log(
+                System.Logger.Level.INFO,
+                "Classpath resolver resolved source [requestedPath={0}, fqcn={1}, contextPath={2}]",
+                requestedPath,
+                requestedFqcn.get(),
+                contextPath
+        );
         return Optional.of(new DependencySource(contextPath, content));
     }
 
@@ -386,10 +455,21 @@ public final class ProjectFileService {
             if (moduleRoot != null) {
                 Path normalizedModuleRoot = moduleRoot.toAbsolutePath().normalize();
                 if (normalizedModuleRoot.startsWith(normalizedProjectRoot)) {
+                    LOGGER.log(
+                            System.Logger.Level.INFO,
+                            "Using module root derived from preferred source path [preferredSource={0}, moduleRoot={1}]",
+                            preferredSourcePath.toAbsolutePath().normalize(),
+                            normalizedModuleRoot
+                    );
                     return normalizedModuleRoot;
                 }
             }
         }
+        LOGGER.log(
+                System.Logger.Level.INFO,
+                "Falling back to project root for context classpath resolution: {0}",
+                normalizedProjectRoot
+        );
         return normalizedProjectRoot;
     }
 
@@ -447,19 +527,48 @@ public final class ProjectFileService {
     }
 
     private Optional<Path> resolveRequestedContextPathIfPresent(Path projectRoot, Path preferredSourcePath, String requestedPath) {
-        for (Path candidate : preferredCandidates(projectRoot, preferredSourcePath, requestedPath)) {
+        List<Path> candidates = preferredCandidates(projectRoot, preferredSourcePath, requestedPath);
+        logCandidatePathsForContextLookup(requestedPath, candidates);
+        for (Path candidate : candidates) {
             if (Files.isRegularFile(candidate)) {
+                LOGGER.log(
+                        System.Logger.Level.INFO,
+                        "Matched requested context path {0} to workspace file {1}",
+                        requestedPath,
+                        candidate.toAbsolutePath().normalize()
+                );
                 return Optional.of(candidate.normalize());
             }
         }
 
         String normalizedSuffix = normalizeSuffix(requestedPath);
+        LOGGER.log(
+                System.Logger.Level.INFO,
+                "No direct file match for context path {0}; scanning project sources by suffix {1}",
+                requestedPath,
+                normalizedSuffix
+        );
         try {
-            return collectProjectJavaSources(projectRoot).stream()
+            Optional<Path> resolvedPath = collectProjectJavaSources(projectRoot).stream()
                     .filter(path -> matchesRequestedSuffix(projectRoot, path, normalizedSuffix))
                     .sorted(preferredPathComparator(projectRoot, preferredSourcePath, normalizedSuffix))
                     .findFirst()
                     .map(Path::normalize);
+            if (resolvedPath.isPresent()) {
+                LOGGER.log(
+                        System.Logger.Level.INFO,
+                        "Resolved context path {0} by suffix scan to {1}",
+                        requestedPath,
+                        resolvedPath.get().toAbsolutePath().normalize()
+                );
+            } else {
+                LOGGER.log(
+                        System.Logger.Level.WARNING,
+                        "Context path {0} not found in workspace source scan",
+                        requestedPath
+                );
+            }
+            return resolvedPath;
         } catch (IOException exception) {
             throw new IllegalStateException("Unable to search for context class path " + requestedPath, exception);
         }
@@ -920,9 +1029,25 @@ public final class ProjectFileService {
     ) {
         ResolutionFailure failure = exception.failure();
         if (failure == null) {
+            LOGGER.log(
+                    System.Logger.Level.WARNING,
+                    "Classpath resolver failed without structured failure for {0}: {1}",
+                    requestedPath,
+                    exception.getMessage()
+            );
             return new IllegalStateException(unresolvedContextMessage(requestedPath), exception);
         }
 
+        LOGGER.log(
+                System.Logger.Level.WARNING,
+                "Classpath resolver failure for {0} [category={1}, tool={2}, moduleRoot={3}, action={4}, output={5}]",
+                requestedPath,
+                failure.category(),
+                failure.buildTool(),
+                failure.moduleRoot(),
+                failure.actionSummary(),
+                failure.outputSnippet()
+        );
         String message = unresolvedContextMessage(requestedPath)
                 + " Classpath resolver failure: "
                 + failure.category()
@@ -932,6 +1057,41 @@ public final class ProjectFileService {
                 + ", output=" + failure.outputSnippet()
                 + "]";
         return new IllegalStateException(message, exception);
+    }
+
+    private void logCandidatePathsForContextLookup(String requestedPath, List<Path> candidates) {
+        if (!LOGGER.isLoggable(System.Logger.Level.DEBUG)) {
+            return;
+        }
+        LOGGER.log(
+                System.Logger.Level.DEBUG,
+                "Workspace candidate paths for {0}: {1}",
+                requestedPath,
+                candidates.size()
+        );
+        int maxEntries = Math.min(candidates.size(), 25);
+        for (int index = 0; index < maxEntries; index++) {
+            LOGGER.log(
+                    System.Logger.Level.DEBUG,
+                    "candidate[{0}]={1}",
+                    index,
+                    candidates.get(index).toAbsolutePath().normalize()
+            );
+        }
+        if (candidates.size() > maxEntries) {
+            LOGGER.log(
+                    System.Logger.Level.DEBUG,
+                    "... omitted {0} additional candidates",
+                    candidates.size() - maxEntries
+            );
+        }
+    }
+
+    private String safePath(Path path) {
+        if (path == null) {
+            return "<none>";
+        }
+        return normalizeSeparators(path.toAbsolutePath().normalize());
     }
 
     @FunctionalInterface
