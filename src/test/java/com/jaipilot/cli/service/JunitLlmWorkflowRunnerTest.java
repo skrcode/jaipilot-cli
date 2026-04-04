@@ -136,6 +136,61 @@ class JunitLlmWorkflowRunnerTest {
     }
 
     @Test
+    void runStartsWithValidationAndFixesExistingTestFileWhenItFails() throws Exception {
+        Path projectRoot = tempDir.resolve("existing-test-fix-project");
+        write(projectRoot.resolve("pom.xml"), "<project/>");
+        Path cutPath = write(
+                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
+                "package com.example;\npublic class CrashController {}\n"
+        );
+        Path outputPath = write(
+                projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java"),
+                """
+                package com.example;
+                class CrashControllerTest {
+                    // PASS
+                    // TEST_FAIL
+                }
+                """
+        );
+        Path fakeMaven = writeFakeMaven(projectRoot);
+
+        StubBackendClient backendClient = new StubBackendClient(
+                outputFinal("""
+                        package com.example;
+                        class CrashControllerTest {
+                            // PASS
+                        }
+                        """)
+        );
+        JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());
+
+        JunitLlmSessionResult result = workflowRunner.run(
+                new JunitLlmSessionRequest(
+                        projectRoot,
+                        cutPath,
+                        outputPath,
+                        JunitLlmOperation.GENERATE,
+                        null,
+                        Files.readString(outputPath),
+                        "",
+                        null
+                ),
+                fakeMaven,
+                List.of(),
+                Duration.ofSeconds(10)
+        );
+
+        assertEquals("session-1", result.sessionId());
+        assertEquals(1, backendClient.requests.size());
+        assertEquals("fix", backendClient.requests.get(0).type());
+        assertTrue(backendClient.requests.get(0).clientLogs().contains("Failed phase: test"));
+        assertTrue(backendClient.requests.get(0).clientLogs().contains("AssertionFailedError: expected: <200> but was: <500>"));
+        assertTrue(Files.readString(outputPath).contains("// PASS"));
+        assertFalse(Files.readString(outputPath).contains("TEST_FAIL"));
+    }
+
+    @Test
     void runDoesNotTriggerCoverageFixWhenValidationPasses() throws Exception {
         Path projectRoot = tempDir.resolve("coverage-improvement-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");

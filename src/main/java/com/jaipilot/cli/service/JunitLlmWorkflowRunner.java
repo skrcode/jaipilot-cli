@@ -100,6 +100,38 @@ public final class JunitLlmWorkflowRunner {
             throw new IllegalStateException(preflightFailureMessage(preflightFailure));
         }
 
+        if (Files.isRegularFile(initialRequest.outputPath())) {
+            ValidationFailure existingTestValidationFailure = validateLocalBuild(
+                    buildTool,
+                    initialRequest.projectRoot(),
+                    compilationRoot,
+                    initialRequest.cutPath(),
+                    initialRequest.outputPath(),
+                    buildExecutable,
+                    timeout
+            );
+            if (existingTestValidationFailure == null) {
+                return new JunitLlmSessionResult(
+                        initialRequest.sessionId(),
+                        initialRequest.outputPath(),
+                        List.of()
+                );
+            }
+            return fixUntilValidationPasses(
+                    initialRequest,
+                    new JunitLlmSessionResult(
+                            initialRequest.sessionId(),
+                            initialRequest.outputPath(),
+                            List.of()
+                    ),
+                    buildTool,
+                    compilationRoot,
+                    buildExecutable,
+                    timeout,
+                    existingTestValidationFailure
+            );
+        }
+
         JunitLlmSessionResult latestSessionResult = sessionRunner.run(initialRequest);
 
         return fixUntilValidationPasses(
@@ -108,7 +140,8 @@ public final class JunitLlmWorkflowRunner {
                 buildTool,
                 compilationRoot,
                 buildExecutable,
-                timeout
+                timeout,
+                null
         );
     }
 
@@ -244,20 +277,24 @@ public final class JunitLlmWorkflowRunner {
             BuildTool buildTool,
             Path compilationRoot,
             Path buildExecutable,
-            Duration timeout
+            Duration timeout,
+            ValidationFailure initialValidationFailure
     ) throws Exception {
         String lastValidatedTestCode = normalizeTestCode(initialRequest.initialTestClassCode());
         String currentTestCode = readTestCode(latestSessionResult.outputPath());
 
-        ValidationFailure validationFailure = validateLocalBuild(
-                buildTool,
-                initialRequest.projectRoot(),
-                compilationRoot,
-                initialRequest.cutPath(),
-                latestSessionResult.outputPath(),
-                buildExecutable,
-                timeout
-        );
+        ValidationFailure validationFailure = initialValidationFailure;
+        if (validationFailure == null) {
+            validationFailure = validateLocalBuild(
+                    buildTool,
+                    initialRequest.projectRoot(),
+                    compilationRoot,
+                    initialRequest.cutPath(),
+                    latestSessionResult.outputPath(),
+                    buildExecutable,
+                    timeout
+            );
+        }
         lastValidatedTestCode = currentTestCode;
 
         if (validationFailure == null) {
