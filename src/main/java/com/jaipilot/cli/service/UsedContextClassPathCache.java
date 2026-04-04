@@ -34,7 +34,7 @@ public final class UsedContextClassPathCache {
     }
 
     public void write(Path absoluteClassPath, List<String> usedContextClassPaths) {
-        Map<String, List<String>> entries = readAll();
+        Map<String, List<String>> entries = new LinkedHashMap<>();
         entries.put(cacheKey(absoluteClassPath), normalizeValues(usedContextClassPaths));
         writeAll(entries);
     }
