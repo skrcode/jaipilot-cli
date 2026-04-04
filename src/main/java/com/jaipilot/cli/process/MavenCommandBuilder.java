@@ -67,6 +67,19 @@ public final class MavenCommandBuilder implements LocalBuildCommandBuilder {
         return command;
     }
 
+    public List<String> buildCompileClasspath(
+            Path projectRoot,
+            Path explicitMavenExecutable,
+            List<String> additionalArguments,
+            String outputFile
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitMavenExecutable, additionalArguments);
+        command.add("-Dmdep.includeScope=compile");
+        command.add("-Dmdep.outputFile=" + outputFile);
+        command.add("dependency:build-classpath");
+        return command;
+    }
+
     public List<String> buildSingleTestCoverage(
             Path projectRoot,
             Path explicitMavenExecutable,

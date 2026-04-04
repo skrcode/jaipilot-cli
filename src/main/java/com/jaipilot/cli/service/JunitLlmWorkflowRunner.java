@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
+import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -563,13 +564,7 @@ public final class JunitLlmWorkflowRunner {
             throw new IllegalStateException("JaCoCo report not found at " + reportPath);
         }
 
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-        factory.setXIncludeAware(false);
-        factory.setExpandEntityReferences(false);
+        DocumentBuilderFactory factory = secureDocumentBuilderFactory();
 
         try (InputStream reportStream = Files.newInputStream(reportPath)) {
             NodeList packageNodes = factory.newDocumentBuilder()
@@ -601,6 +596,36 @@ public final class JunitLlmWorkflowRunner {
                 "JaCoCo report did not contain line coverage for " + coverageCoordinate.packagePath() + "/"
                         + coverageCoordinate.sourceFileName()
         );
+    }
+
+    private DocumentBuilderFactory secureDocumentBuilderFactory() {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        setFeatureIfSupported(factory, XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        setFeatureIfSupported(factory, "http://apache.org/xml/features/disallow-doctype-decl", true);
+        setFeatureIfSupported(factory, "http://xml.org/sax/features/external-general-entities", false);
+        setFeatureIfSupported(factory, "http://xml.org/sax/features/external-parameter-entities", false);
+        setFeatureIfSupported(factory, "http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        setAttributeIfSupported(factory, XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        setAttributeIfSupported(factory, XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
+        return factory;
+    }
+
+    private void setFeatureIfSupported(DocumentBuilderFactory factory, String feature, boolean value) {
+        try {
+            factory.setFeature(feature, value);
+        } catch (Exception ignored) {
+            // Some JAXP implementations reject specific feature flags.
+        }
+    }
+
+    private void setAttributeIfSupported(DocumentBuilderFactory factory, String attribute, String value) {
+        try {
+            factory.setAttribute(attribute, value);
+        } catch (Exception ignored) {
+            // Attribute support differs between parser implementations.
+        }
     }
 
     private CoverageSnapshot lineCoverageFromCounter(Path reportPath, Element sourceFileElement) {

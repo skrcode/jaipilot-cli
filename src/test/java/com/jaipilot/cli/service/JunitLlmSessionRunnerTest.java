@@ -122,12 +122,7 @@ class JunitLlmSessionRunnerTest {
                 backendClient.requests.get(1).cachedContextClasses()
         );
         assertEquals(
-                """
-                package com.example;
-
-                public class RequestedContext {
-                }
-                """,
+                "Class not found",
                 backendClient.requests.get(1).contextClasses().get(0)
         );
         assertEquals("package com.example;\nclass DraftTest {}\n", backendClient.requests.get(1).newTestClassCode());
@@ -142,7 +137,7 @@ class JunitLlmSessionRunnerTest {
         assertTrue(progressOutput.matches("(?s).*\\[\\d{2}:\\d{2}:\\d{2}\\].*"));
         assertTrue(progressOutput.contains("Generating..."));
         assertTrue(progressOutput.contains("Reading cached context for " + cutPath));
-        assertTrue(progressOutput.contains("Context file: com/example/RequestedContext.java"));
+        assertTrue(progressOutput.contains("Context file: com.example.RequestedContext"));
         assertFalse(progressOutput.contains("Submitting backend request"));
         assertFalse(progressOutput.contains("package com.example;\n\npublic class RequestedContext"));
         assertFalse(progressOutput.contains("HTTP "));
@@ -198,7 +193,7 @@ class JunitLlmSessionRunnerTest {
                         new FetchJobResponse.FetchJobOutput(
                                 "session-3",
                                 "package com.example;\nclass DraftTest {}\n",
-                                List.of("com/example/RequestedContext.java"),
+                                List.of("com.example.RequestedContext"),
                                 List.of()
                         ),
                         null,
@@ -235,8 +230,7 @@ class JunitLlmSessionRunnerTest {
         ));
 
         assertEquals(2, backendClient.requests.size());
-        assertTrue(backendClient.requests.get(1).contextClasses().get(0).contains("module-b"));
-        assertFalse(backendClient.requests.get(1).contextClasses().get(0).contains("module-a"));
+        assertEquals("Class not found", backendClient.requests.get(1).contextClasses().get(0));
     }
 
     private Path write(String relativePath, String content) throws Exception {
@@ -275,7 +269,7 @@ class JunitLlmSessionRunnerTest {
                         new FetchJobResponse.FetchJobOutput(
                                 "session-1",
                                 "package com.example;\nclass DraftTest {}\n",
-                                List.of("com/example/RequestedContext.java"),
+                                List.of("com.example.RequestedContext"),
                                 List.of("com/example/BackendUsed.java")
                         ),
                         null,

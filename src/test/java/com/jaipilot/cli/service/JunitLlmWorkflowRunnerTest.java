@@ -324,7 +324,7 @@ class JunitLlmWorkflowRunnerTest {
         Path fakeMaven = writeFakeMaven(projectRoot);
 
         StubBackendClient backendClient = new StubBackendClient(
-                outputRequiredContext("com/example/Dependency.java"),
+                outputRequiredContext("com.example.Dependency"),
                 outputFinal("package com.example; class CrashControllerTest { // PASS // HIGH_COVERAGE }\n")
         );
         JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());

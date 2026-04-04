@@ -82,6 +82,24 @@ class MavenCommandBuilderTest {
     }
 
     @Test
+    void buildsCompileClasspathCommand() {
+        List<String> command = commandBuilder.buildCompileClasspath(
+                Path.of("/tmp/project"),
+                Path.of("custom-mvn"),
+                List.of("-q"),
+                ".classpath.txt"
+        );
+
+        assertEquals("custom-mvn", command.get(0));
+        assertTrue(command.contains("-B"));
+        assertTrue(command.contains("-ntp"));
+        assertTrue(command.contains("-q"));
+        assertTrue(command.contains("-Dmdep.includeScope=compile"));
+        assertTrue(command.contains("-Dmdep.outputFile=.classpath.txt"));
+        assertTrue(command.contains("dependency:build-classpath"));
+    }
+
+    @Test
     void buildsSingleTestCoverageCommand() {
         List<String> command = commandBuilder.buildSingleTestCoverage(
                 Path.of("/tmp/project"),

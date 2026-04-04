@@ -7,7 +7,18 @@ import com.jaipilot.cli.model.InvokeJunitLlmRequest;
 import com.jaipilot.cli.model.InvokeJunitLlmResponse;
 import com.jaipilot.cli.model.JunitLlmSessionRequest;
 import com.jaipilot.cli.model.JunitLlmSessionResult;
+import com.jaipilot.cli.process.BuildTool;
+import com.jaipilot.cli.process.ExecutionResult;
+import com.jaipilot.cli.process.MavenCommandBuilder;
+import com.jaipilot.cli.process.ProcessExecutor;
+import java.io.File;
+import java.io.PrintWriter;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -18,11 +29,17 @@ public final class JunitLlmSessionRunner {
     private static final int MAX_FETCH_ATTEMPTS = 120;
     private static final long FETCH_DELAY_MILLIS = 1_000L;
     private static final String DEFAULT_MOCKITO_VERSION = "5.11.0";
+    private static final String MISSING_CONTEXT_CLASS_PLACEHOLDER = "Class not found";
+    private static final String MAVEN_CLASSPATH_OUTPUT_FILE = ".classpath.txt";
+    private static final Duration CONTEXT_RESOLUTION_TIMEOUT = Duration.ofSeconds(120);
+    private static final PrintWriter QUIET_WRITER = new PrintWriter(Writer.nullWriter());
 
     private final JunitLlmBackendClient backendClient;
     private final ProjectFileService fileService;
     private final UsedContextClassPathCache usedContextClassPathCache;
     private final JunitLlmConsoleLogger consoleLogger;
+    private final MavenCommandBuilder mavenCommandBuilder;
+    private final ProcessExecutor processExecutor;
 
     public JunitLlmSessionRunner(
             JunitLlmBackendClient backendClient,
@@ -30,10 +47,30 @@ public final class JunitLlmSessionRunner {
             UsedContextClassPathCache usedContextClassPathCache,
             JunitLlmConsoleLogger consoleLogger
     ) {
+        this(
+                backendClient,
+                fileService,
+                usedContextClassPathCache,
+                consoleLogger,
+                new MavenCommandBuilder(),
+                new ProcessExecutor()
+        );
+    }
+
+    JunitLlmSessionRunner(
+            JunitLlmBackendClient backendClient,
+            ProjectFileService fileService,
+            UsedContextClassPathCache usedContextClassPathCache,
+            JunitLlmConsoleLogger consoleLogger,
+            MavenCommandBuilder mavenCommandBuilder,
+            ProcessExecutor processExecutor
+    ) {
         this.backendClient = backendClient;
         this.fileService = fileService;
         this.usedContextClassPathCache = usedContextClassPathCache;
         this.consoleLogger = consoleLogger;
+        this.mavenCommandBuilder = mavenCommandBuilder == null ? new MavenCommandBuilder() : mavenCommandBuilder;
+        this.processExecutor = processExecutor == null ? new ProcessExecutor() : processExecutor;
     }
 
     public JunitLlmSessionResult run(JunitLlmSessionRequest sessionRequest) throws Exception {
@@ -91,9 +128,8 @@ public final class JunitLlmSessionRunner {
             List<String> requiredContextPaths = output.requiredContextClassPaths();
             if (requiredContextPaths != null && !requiredContextPaths.isEmpty()) {
                 printContextPaths(requiredContextPaths);
-                requestedContextClasses = fileService.readRequestedContextSources(
-                        sessionRequest.projectRoot(),
-                        sessionRequest.cutPath(),
+                requestedContextClasses = resolveRequiredContextClassesViaJavap(
+                        sessionRequest,
                         requiredContextPaths
                 );
                 continue;
@@ -201,6 +237,102 @@ public final class JunitLlmSessionRunner {
 
     private Path cacheKeyPath(JunitLlmSessionRequest sessionRequest) {
         return sessionRequest.cutPath().toAbsolutePath().normalize();
+    }
+
+    private List<String> resolveRequiredContextClassesViaJavap(
+            JunitLlmSessionRequest sessionRequest,
+            List<String> requiredContextClassNames
+    ) {
+        if (requiredContextClassNames == null || requiredContextClassNames.isEmpty()) {
+            return List.of();
+        }
+
+        BuildTool buildTool = fileService.detectBuildTool(sessionRequest.projectRoot(), null).orElse(null);
+        if (buildTool != BuildTool.MAVEN) {
+            return missingContextClasses(requiredContextClassNames);
+        }
+
+        Path moduleRoot = resolveMavenModuleRoot(sessionRequest);
+        ExecutionResult classpathBuildResult;
+        try {
+            classpathBuildResult = processExecutor.execute(
+                    mavenCommandBuilder.buildCompileClasspath(
+                            moduleRoot,
+                            null,
+                            List.of("-q"),
+                            MAVEN_CLASSPATH_OUTPUT_FILE
+                    ),
+                    moduleRoot,
+                    CONTEXT_RESOLUTION_TIMEOUT,
+                    false,
+                    QUIET_WRITER
+            );
+        } catch (Exception exception) {
+            return missingContextClasses(requiredContextClassNames);
+        }
+        if (!isSuccessful(classpathBuildResult)) {
+            return missingContextClasses(requiredContextClassNames);
+        }
+
+        Path classpathFile = moduleRoot.resolve(MAVEN_CLASSPATH_OUTPUT_FILE).toAbsolutePath().normalize();
+        if (!Files.isRegularFile(classpathFile)) {
+            return missingContextClasses(requiredContextClassNames);
+        }
+
+        String dependencyClasspath;
+        try {
+            dependencyClasspath = Files.readString(classpathFile, StandardCharsets.UTF_8).trim();
+        } catch (Exception exception) {
+            return missingContextClasses(requiredContextClassNames);
+        }
+
+        String javapClasspath = moduleRoot.resolve("target/classes").toAbsolutePath().normalize()
+                + (dependencyClasspath.isBlank() ? "" : File.pathSeparator + dependencyClasspath);
+        List<String> resolvedContextClasses = new ArrayList<>();
+        for (String requiredContextClassName : requiredContextClassNames) {
+            String className = requiredContextClassName == null ? "" : requiredContextClassName.trim();
+            if (className.isBlank()) {
+                resolvedContextClasses.add(MISSING_CONTEXT_CLASS_PLACEHOLDER);
+                continue;
+            }
+            ExecutionResult javapResult;
+            try {
+                javapResult = processExecutor.execute(
+                        List.of("javap", "-classpath", javapClasspath, className),
+                        moduleRoot,
+                        CONTEXT_RESOLUTION_TIMEOUT,
+                        false,
+                        QUIET_WRITER
+                );
+            } catch (Exception exception) {
+                resolvedContextClasses.add(MISSING_CONTEXT_CLASS_PLACEHOLDER);
+                continue;
+            }
+            if (!isSuccessful(javapResult) || javapResult.output() == null || javapResult.output().isBlank()) {
+                resolvedContextClasses.add(MISSING_CONTEXT_CLASS_PLACEHOLDER);
+            } else {
+                resolvedContextClasses.add(javapResult.output());
+            }
+        }
+        return List.copyOf(resolvedContextClasses);
+    }
+
+    private Path resolveMavenModuleRoot(JunitLlmSessionRequest sessionRequest) {
+        Path moduleRoot = fileService.findNearestMavenProjectRoot(sessionRequest.cutPath());
+        if (moduleRoot != null) {
+            return moduleRoot.toAbsolutePath().normalize();
+        }
+        return sessionRequest.projectRoot().toAbsolutePath().normalize();
+    }
+
+    private List<String> missingContextClasses(List<String> requiredContextClassNames) {
+        return requiredContextClassNames.stream()
+                .map(ignored -> MISSING_CONTEXT_CLASS_PLACEHOLDER)
+                .toList();
+    }
+
+    private boolean isSuccessful(ExecutionResult result) {
+        return result != null && !result.timedOut() && result.exitCode() == 0;
     }
 
     private List<String> buildCachedContextClasses(
