@@ -1,5 +1,5 @@
-name: "JAIPilot - Improve test coverage"
-description: "Automatically generate, fix, and commit high-coverage JUnit tests for Java PRs (Maven & Gradle)."
+name: "JAIPilot - Reach 80%+ Unit Test Coverage on Every PR"
+description: "Achieve 80%+ unit test coverage on every PR by automatically generating, fixing, and committing production-ready tests for Java (Maven & Gradle)."
 author: "JAIPilot"
 
 branding:

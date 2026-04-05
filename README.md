@@ -55,33 +55,12 @@ Bundled-runtime releases target:
 
 Make sure `~/.local/bin` is on your `PATH`.
 
-## Update
+## Usage Options
 
-Update to the latest release with:
+You can use JAIPilot in either of these ways:
 
-```sh
-jaipilot update
-```
-
-Check without installing:
-
-```sh
-jaipilot update --check
-```
-
-Enable automatic startup installs when a new release is available:
-
-```sh
-jaipilot update --enable-auto-updates
-```
-
-Disable them again with:
-
-```sh
-jaipilot update --disable-auto-updates
-```
-
-JAIPilot checks for updates on startup for installer-managed installs. Set `JAIPILOT_DISABLE_UPDATE_CHECK=true` to skip startup checks entirely.
+- JAIPilot CLI (run locally with `jaipilot` commands)
+- GitHub Action (run automatically on pull requests in GitHub)
 
 ## Quick Start
 
@@ -90,6 +69,8 @@ Authenticate once:
 ```sh
 jaipilot login
 ```
+
+Get your license key by logging in at `https://jaipilot.com` (free credits are available).
 
 Generate a JUnit test for a class:
 
@@ -112,6 +93,7 @@ jaipilot generate src/main/java/org/example/CrashController.java --build-arg -Ds
 ## GitHub Action (PR Automation)
 
 To run JAIPilot automatically on pull requests with this action, you must provide your JAIPilot license key to the workflow.
+Get the key by logging in at `https://jaipilot.com` (free credits are available).
 
 1. Go to your repository `Settings` -> `Secrets and variables` -> `Actions`.
 2. Create a repository secret (for example `JAIPILOT_LICENSE_KEY`) and paste your JAIPilot license key as the value.
