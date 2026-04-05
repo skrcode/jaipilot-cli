@@ -29,5 +29,5 @@ jobs:
 
       - name: Run JAIPilot generate and push changes
         uses: ./
-        # with:
-        #   jaipilot-license-key: ${{ secrets.JAIPILOT_LICENSE_KEY }}
+        with:
+          jaipilot-license-key: ${{ secrets.JAIPILOT_LICENSE_KEY }}
