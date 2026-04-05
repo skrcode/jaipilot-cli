@@ -36,6 +36,17 @@ JAIPilot automatically generates high quality high coverage unit tests for PRs f
 - Analyzes changed Java code and context for every PR to generate high quality meaningful tests
 - Builds, executes, and maximizes line coverage
 
+## GitHub Action (PR Automation)
+
+To run JAIPilot automatically on pull requests with this action, you must provide your JAIPilot license key to the workflow.
+Get the key by logging in at `https://jaipilot.com` (free credits are available).
+
+1. Go to your repository `Settings` -> `Secrets and variables` -> `Actions`.
+2. Create a repository secret (for example `JAIPILOT_LICENSE_KEY`) and paste your JAIPilot license key as the value.
+3. Reference that secret in your workflow input/env for the JAIPilot action.
+
+Without a valid license key configured in the action, JAIPilot will not auto-execute on PRs.
+
 ## Install
 
 Install with:
@@ -89,17 +100,6 @@ Pass extra build arguments when needed:
 ```sh
 jaipilot generate src/main/java/org/example/CrashController.java --build-arg -DskipITs
 ```
-
-## GitHub Action (PR Automation)
-
-To run JAIPilot automatically on pull requests with this action, you must provide your JAIPilot license key to the workflow.
-Get the key by logging in at `https://jaipilot.com` (free credits are available).
-
-1. Go to your repository `Settings` -> `Secrets and variables` -> `Actions`.
-2. Create a repository secret (for example `JAIPILOT_LICENSE_KEY`) and paste your JAIPilot license key as the value.
-3. Reference that secret in your workflow input/env for the JAIPilot action.
-
-Without a valid license key configured in the action, JAIPilot will not auto-execute on PRs.
 
 ## Commands
 
