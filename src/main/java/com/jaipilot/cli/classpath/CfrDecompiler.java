@@ -22,6 +22,7 @@ final class CfrDecompiler {
 
     private static final System.Logger LOGGER = System.getLogger(CfrDecompiler.class.getName());
 
+    
     Optional<String> decompile(Path classContainer, String classEntryPath) {
         if (classContainer == null || classEntryPath == null || classEntryPath.isBlank()) {
             return Optional.empty();
