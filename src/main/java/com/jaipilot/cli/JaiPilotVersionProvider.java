@@ -6,7 +6,7 @@ public final class JaiPilotVersionProvider implements IVersionProvider {
 
     @Override
     public String[] getVersion() {
-        return new String[] {resolveVersion()};
+        return new String[] { resolveVersion() };
     }
 
     public static String resolveVersion() {
@@ -18,3 +18,4 @@ public final class JaiPilotVersionProvider implements IVersionProvider {
         return version;
     }
 }
+
