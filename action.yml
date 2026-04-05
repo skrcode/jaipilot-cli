@@ -1,5 +1,5 @@
 name: "JAIPilot - Reach 80%+ Unit Test Coverage on Every PR"
-description: "Achieve 80%+ unit test coverage on every PR by automatically generating, fixing, and committing production-ready tests for Java (Maven & Gradle)."
+description: "Achieve 80%+ unit test coverage on every PR by automatically generating production-ready tests for Java (Maven & Gradle)."
 author: "JAIPilot"
 
 branding:
